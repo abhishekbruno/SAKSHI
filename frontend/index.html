@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAKSHI — Investigation Platform (MOD-01 + MOD-02)</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="top-nav">
+      <div class="brand">
+        <div class="badge-pulse"></div>
+        <div>
+          <h1>SAKSHI <span class="tag">MOD-01</span><span class="tag tag-mod02">MOD-02</span></h1>
+          <p class="subtitle">EC-MORE Architecture | Phase 1: Case Initiation + Identity/OIDC</p>
+        </div>
+      </div>
+      <div class="auth-context">
+        <span id="authModeIndicator" class="auth-mode-badge dev">DEV AUTH</span>
+        <span class="user-role">INVESTIGATING OFFICER</span>
+        <span class="user-id" id="currentUserDisplay">IO-7842-SHARMA</span>
+        <span id="authMethodDisplay" class="auth-method dev-warning">⚠️ DEVELOPMENT ONLY</span>
+        <span class="status-indicator">CONNECTED</span>
+      </div>
+    </header>
+
+    <!-- MOD-02: Development-Only Login Panel -->
+    <section id="devLoginSection" class="card dev-login-card">
+      <div class="card-header">
+        <h3>⚠️ Development Authentication (MOD-02)</h3>
+        <span class="dev-badge">DEVELOPMENT ONLY — NOT FOR PRODUCTION</span>
+      </div>
+      <form id="devLoginForm" class="dev-login-form">
+        <div class="grid-3">
+          <div class="form-group">
+            <label for="devSubjectId">Investigator Subject ID</label>
+            <input type="text" id="devSubjectId" value="IO-7842-SHARMA" placeholder="e.g. IO-7842-SHARMA">
+          </div>
+          <div class="form-group">
+            <label for="devRole">Role</label>
+            <select id="devRole" class="form-select">
+              <option value="INVESTIGATING_OFFICER" selected>Investigating Officer</option>
+              <option value="SUPERVISORY_OFFICER">Supervisory Officer</option>
+              <option value="STATION_HEAD">Station Head</option>
+              <option value="ADMIN">Administrator</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="devJurisdiction">Jurisdiction</label>
+            <input type="text" id="devJurisdiction" value="JUR-DEL-04" placeholder="e.g. JUR-DEL-04">
+          </div>
+        </div>
+        <button type="submit" class="btn btn-dev">Set Development Identity</button>
+      </form>
+    </section>
+
+    <!-- Main Content Grid -->
+    <main class="main-layout">
+      <!-- Left Column: Case Creation Form -->
+      <section class="card form-card">
+        <div class="card-header">
+          <h2>Initiate Death Investigation</h2>
+          <span class="source-tag">Source: Create Case / Assign IO</span>
+        </div>
+
+        <form id="createCaseForm">
+          <div class="form-group">
+            <label for="caseTitle">Case Title / Legal Matter Reference *</label>
+            <input type="text" id="caseTitle" required placeholder="e.g. Unnatural Death Inquiry - Apartment 4B" value="Unnatural Death Investigation - Central District">
+          </div>
+
+          <div class="section-divider">
+            <span>FIR METADATA (FIRST INFORMATION REPORT)</span>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label for="firNumber">FIR Number *</label>
+              <input type="text" id="firNumber" required placeholder="e.g. FIR-2026-0428" value="FIR-2026-0814">
+            </div>
+            <div class="form-group">
+              <label for="policeStation">Police Station / Jurisdiction *</label>
+              <input type="text" id="policeStation" required placeholder="e.g. Central Forensic Division" value="Central Forensic Division">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label for="incidentDate">Incident Date / Time</label>
+              <input type="datetime-local" id="incidentDate" value="2026-09-30T04:15">
+            </div>
+            <div class="form-group">
+              <label for="incidentLocation">Incident Location</label>
+              <input type="text" id="incidentLocation" placeholder="e.g. Hotel Sapphire, Room 304" value="Central Division Sector 4">
+            </div>
+          </div>
+
+          <div class="section-divider">
+            <span>INVESTIGATING OFFICER (IO) ASSOCIATION</span>
+          </div>
+
+          <div class="form-group">
+            <label for="assignedIO">Assigned Investigating Officer ID</label>
+            <input type="text" id="assignedIO" placeholder="Defaults to current IO context" value="IO-7842-SHARMA">
+            <small class="helper-text">Binds human accountability to the case workspace root.</small>
+          </div>
+
+          <button type="submit" class="btn btn-primary" id="submitBtn">
+            <span>Establish Case Workspace & Generate Case ID</span>
+          </button>
+        </form>
+
+        <!-- Notification Banner -->
+        <div id="statusBanner" class="banner hidden"></div>
+      </section>
+
+      <!-- Right Column: Case Output & Active Investigations -->
+      <section class="dashboard-column">
+        <!-- Success Output Card (Hidden by default) -->
+        <div id="outputCard" class="card output-card hidden">
+          <div class="card-header highlight">
+            <h3>★ Case Workspace Established</h3>
+            <span class="badge-success">PHASE 1 COMPLETE</span>
+          </div>
+          <div class="output-body">
+            <div class="metric-row">
+              <span class="metric-label">AUTHORITATIVE CASE ID:</span>
+              <span class="metric-value code" id="outCaseId">SAKSHI-CASE-2026-XXXX</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">WORKSPACE IDENTIFIER:</span>
+              <span class="metric-value code" id="outWorkspaceId">WS-XXXX</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">ASSIGNED IO:</span>
+              <span class="metric-value" id="outAssignedIO">IO-7842-SHARMA</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">LIFECYCLE STAGE:</span>
+              <span class="metric-value stage-tag" id="outStage">INITIALIZED</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">DOWNSTREAM STATUS:</span>
+              <span class="metric-value ready-tag">READY FOR PHASE 02: EVIDENCE INGESTION</span>
+            </div>
+
+            <div class="action-row">
+              <button class="btn btn-secondary" id="viewContractBtn">View Phase 2 Contract JSON</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cases List -->
+        <div class="card">
+          <div class="card-header">
+            <h3>Active Cases Under Investigation</h3>
+            <button class="btn btn-sm" id="refreshBtn">Refresh</button>
+          </div>
+          <div class="table-container">
+            <table class="cases-table">
+              <thead>
+                <tr>
+                  <th>Case ID</th>
+                  <th>FIR No.</th>
+                  <th>Title</th>
+                  <th>Assigned IO</th>
+                  <th>Stage</th>
+                </tr>
+              </thead>
+              <tbody id="casesTableBody">
+                <tr><td colspan="5" class="empty-state">Loading registered cases...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Phase 2 Contract Modal / Display -->
+        <div id="contractBox" class="card code-card hidden">
+          <div class="card-header">
+            <h4>Phase 2 Evidence Ingestion Handoff Contract</h4>
+            <button class="btn btn-sm" id="closeContractBtn">Close</button>
+          </div>
+          <pre><code id="contractCode"></code></pre>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
