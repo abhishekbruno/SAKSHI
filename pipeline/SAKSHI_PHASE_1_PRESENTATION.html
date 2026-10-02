@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAKSHI — Phase 1: Case Initiation | Technical Presentation</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #090d16;
+      --surface: #111827;
+      --surface-card: #162032;
+      --surface-border: #1f2937;
+      --cyan: #00f0ff;
+      --cyan-glow: rgba(0, 240, 255, 0.2);
+      --primary: #38bdf8;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --code-bg: #0b1120;
+      --accent: #818cf8;
+      --success: #34d399;
+      --warning: #fbbf24;
+      --danger: #f87171;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 15px;
+      padding-bottom: 90px;
+    }
+
+    header {
+      background: rgba(17, 24, 39, 0.92);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--surface-border);
+      position: sticky;
+      top: 0;
+      z-index: 1000;
+      padding: 14px 28px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-badge {
+      background: linear-gradient(135deg, #0284c7, #00f0ff);
+      color: #04101d;
+      font-weight: 800;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      letter-spacing: 1px;
+    }
+
+    .brand-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      letter-spacing: -0.2px;
+    }
+
+    .nav-tabs {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+    }
+
+    .nav-btn {
+      background: var(--surface-card);
+      color: var(--text-muted);
+      border: 1px solid var(--surface-border);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .nav-btn:hover {
+      color: var(--cyan);
+      border-color: var(--cyan);
+    }
+
+    .container {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+
+    .slide-card {
+      background: var(--surface);
+      border: 1px solid var(--surface-border);
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 32px;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+      position: relative;
+    }
+
+    .slide-badge {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 3px 8px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      background: rgba(56, 189, 248, 0.15);
+      color: var(--primary);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+
+    h1, h2, h3, h4 {
+      color: #fff;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    h1 { font-size: 28px; margin-bottom: 8px; color: var(--cyan); }
+    h2 { font-size: 22px; margin-bottom: 16px; border-bottom: 1px solid var(--surface-border); padding-bottom: 8px; }
+    h3 { font-size: 18px; margin-top: 20px; margin-bottom: 12px; color: var(--primary); }
+    h4 { font-size: 15px; margin-bottom: 8px; }
+
+    p, li {
+      color: var(--text-muted);
+      font-size: 15px;
+      margin-bottom: 12px;
+    }
+
+    strong {
+      color: #fff;
+    }
+
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--surface-border);
+      border-radius: 8px;
+      padding: 16px;
+      overflow-x: auto;
+      margin: 16px 0;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13.5px;
+      color: #e2e8f0;
+      line-height: 1.5;
+    }
+
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      background: rgba(255,255,255,0.06);
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: var(--cyan);
+    }
+
+    pre code {
+      background: transparent;
+      padding: 0;
+      color: inherit;
+    }
+
+    blockquote {
+      background: rgba(2, 132, 199, 0.08);
+      border-left: 4px solid var(--cyan);
+      padding: 16px 20px;
+      border-radius: 0 8px 8px 0;
+      margin: 20px 0;
+      color: #f1f5f9;
+    }
+
+    blockquote strong {
+      color: var(--cyan);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 14px;
+    }
+
+    th, td {
+      border: 1px solid var(--surface-border);
+      padding: 10px 14px;
+      text-align: left;
+    }
+
+    th {
+      background: var(--surface-card);
+      color: var(--cyan);
+      font-weight: 700;
+    }
+
+    tr:nth-child(even) {
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .viva-box {
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.1), rgba(99, 102, 241, 0.08));
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 8px;
+      padding: 18px 22px;
+      margin-top: 16px;
+    }
+
+    .viva-title {
+      font-weight: 800;
+      font-size: 13px;
+      color: var(--cyan);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .mermaid {
+      background: var(--code-bg);
+      border: 1px solid var(--surface-border);
+      border-radius: 8px;
+      padding: 20px;
+      margin: 16px 0;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-badge">SAKSHI v2.0</span>
+      <span class="brand-title">Phase 1: Case Initiation Defense Deck</span>
+    </div>
+    <div class="nav-tabs">
+      <a class="nav-btn" href="#section-1">MOD-01 Case Mgmt</a>
+      <a class="nav-btn" href="#section-2">MOD-02 OIDC</a>
+      <a class="nav-btn" href="#section-3">MOD-03 RBAC/ABAC</a>
+      <a class="nav-btn" href="#section-4">MOD-04 Stage Engine</a>
+      <a class="nav-btn" href="#section-5" style="border-color: var(--cyan); color: var(--cyan);">Integration</a>
+    </div>
+  </header>
+
+  <div class="container" id="content"></div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#0B1120',
+        primaryColor: '#0C4A6E',
+        primaryTextColor: '#F8FAFC',
+        primaryBorderColor: '#38BDF8',
+        lineColor: '#38BDF8',
+        secondaryColor: '#1E293B',
+        tertiaryColor: '#0F172A'
+      }
+    });
+
+    const renderer = new marked.Renderer();
+    const origCode = renderer.code.bind(renderer);
+    renderer.code = function(code, language) {
+      if (language === 'mermaid') {
+        return '<div class="mermaid">' + code + '</div>';
+      }
+      return origCode(code, language);
+    };
+
+    marked.setOptions({
+      renderer: renderer,
+      breaks: false,
+      gfm: true
+    });
+
+    fetch('SAKSHI_PHASE_1_PRESENTATION.md')
+      .then(res => res.text())
+      .then(mdText => {
+        document.getElementById('content').innerHTML = marked.parse(mdText);
+        mermaid.run({ querySelector: '.mermaid' });
+      })
+      .catch(err => {
+        console.error('Error fetching markdown:', err);
+      });
+  </script>
+</body>
+</html>
