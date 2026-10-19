@@ -25,16 +25,115 @@ class Settings(BaseSettings):
         description="Database connection URL (PostgreSQL or SQLite)"
     )
 
+    # Database engine and connection pool configuration (used when connected to PostgreSQL)
+    DB_POOL_SIZE: int = Field(
+        default=5,
+        description="Connection pool size for PostgreSQL"
+    )
+    DB_MAX_OVERFLOW: int = Field(
+        default=10,
+        description="Maximum overflow connections beyond pool size for PostgreSQL"
+    )
+    DB_POOL_TIMEOUT: int = Field(
+        default=30,
+        description="Connection pool timeout in seconds"
+    )
+    DB_CONNECT_TIMEOUT: int = Field(
+        default=10,
+        description="PostgreSQL TCP connection establishment timeout in seconds"
+    )
+    DB_POOL_PRE_PING: bool = Field(
+        default=True,
+        description="Enable connection liveness ping on checkout (prevents stale connections)"
+    )
+    DB_ECHO: bool = Field(
+        default=False,
+        description="Enable SQLAlchemy SQL query echo logging"
+    )
+
+    # ─── RAG & Vector Embedding Configuration (Phase 3) ──────────────────────
+    # Selected Model: sentence-transformers/all-MiniLM-L6-v2
+    # Output Dimension: 384 (verified)
+    # License: Apache 2.0 | Architecture: 6-layer MiniLM | Offline-capable: Yes
+    EMBEDDING_MODEL_NAME: str = Field(
+        default="sentence-transformers/all-MiniLM-L6-v2",
+        description="Authoritative embedding model identifier for SAKSHI RAG"
+    )
+    EMBEDDING_DIMENSION: int = Field(
+        default=384,
+        description="Verified output dimension for all-MiniLM-L6-v2 (384 dimensions)"
+    )
+    EMBEDDING_PROVIDER: str = Field(
+        default="deterministic_mock",
+        description="Active embedding provider: 'deterministic_mock' (test/dev/offline) or 'sentence_transformer' (production)"
+    )
+
+    # ─── RAG Chunking Configuration ──────────────────────────────────────────
+    RAG_CHUNK_SIZE: int = Field(
+        default=500,
+        description="Target character length per evidence chunk (500 chars ~ 80-100 words)"
+    )
+    RAG_CHUNK_OVERLAP: int = Field(
+        default=100,
+        description="Character overlap between consecutive chunks to maintain semantic continuity"
+    )
+    RAG_MIN_CHUNK_LENGTH: int = Field(
+        default=30,
+        description="Minimum character length for an indexable chunk (discards blank/header noise)"
+    )
+    RAG_MAX_DOC_CHARS: int = Field(
+        default=10_000_000,
+        description="Maximum character limit for an extracted evidence document before throttling"
+    )
+    RAG_SEARCH_DEFAULT_LIMIT: int = Field(
+        default=10,
+        description="Default number of case-scoped evidence passages returned by retrieval"
+    )
+    RAG_SEARCH_MAX_LIMIT: int = Field(
+        default=20,
+        description="Hard upper bound for a single retrieval request"
+    )
+    RAG_SEARCH_MAX_QUERY_CHARS: int = Field(
+        default=2_000,
+        description="Maximum query length accepted by the retrieval API"
+    )
+    RAG_SQLITE_RETRIEVAL_CANDIDATE_LIMIT: int = Field(
+        default=250,
+        description="Bounded eligible-chunk candidate set used by the SQLite development fallback"
+    )
+
     # CORS configuration
     CORS_ORIGINS: List[str] = ["*"]
+
+    # ─── MOD-07: Antivirus Scanner Configuration ──────────────────────────
+    # Explicit scanner selection: 'clamav' (production) or 'eicar_heuristic' (dev/testing).
+    # Critical security rule: if 'clamav' is configured and unavailable, fail-closed.
+    # No silent fallback to heuristic scanner.
+    ANTIVIRUS_SCANNER: str = Field(
+        default="eicar_heuristic",
+        description="Active antivirus scanner: 'clamav' (production) or 'eicar_heuristic' (dev/testing)"
+    )
+    CLAMAV_HOST: str = Field(
+        default="127.0.0.1",
+        description="ClamAV daemon (clamd) host or IP"
+    )
+    CLAMAV_PORT: int = Field(
+        default=3310,
+        description="ClamAV daemon (clamd) TCP port"
+    )
+    CLAMAV_TIMEOUT_SECONDS: float = Field(
+        default=30.0,
+        description="ClamAV scan timeout in seconds"
+    )
 
     # ─── MOD-02: Identity / OIDC Configuration ───────────────────────────
     # AUTH_MODE controls authentication strategy:
     #   "development" — deterministic local dev identity, no real token validation
     #   "oidc"        — real OIDC provider with JWT signature verification
+    #   "firebase"    — Firebase Admin ID-token verification + local officer registry
     AUTH_MODE: str = Field(
         default="development",
-        description="Authentication mode: 'development' (mock identity) or 'oidc' (real provider)"
+        description="Authentication mode: 'development', 'oidc', or 'firebase'"
     )
 
     # OIDC Provider settings (required when AUTH_MODE=oidc)
@@ -68,6 +167,12 @@ class Settings(BaseSettings):
         default=3600,
         description="JWKS cache time-to-live in seconds"
     )
+
+    # Firebase Admin uses Application Default Credentials (or GOOGLE_APPLICATION_CREDENTIALS)
+    # on the server. FIREBASE_WEB_API_KEY is only for the server-side password exchange;
+    # it is never returned to the browser.
+    FIREBASE_PROJECT_ID: Optional[str] = Field(default=None)
+    FIREBASE_WEB_API_KEY: Optional[str] = Field(default=None)
 
     # Development-mode identity defaults (only used when AUTH_MODE=development)
     DEV_INVESTIGATOR_SUBJECT_ID: str = Field(
@@ -104,6 +209,20 @@ class Settings(BaseSettings):
     def is_oidc_auth(self) -> bool:
         """Returns True when real OIDC authentication is configured."""
         return self.AUTH_MODE.lower() == "oidc"
+
+    @property
+    def is_firebase_auth(self) -> bool:
+        return self.AUTH_MODE.lower() == "firebase"
+
+    @property
+    def is_sqlite(self) -> bool:
+        """Returns True when the active database is SQLite."""
+        return self.DATABASE_URL.lower().startswith("sqlite")
+
+    @property
+    def is_postgres(self) -> bool:
+        """Returns True when the active database is PostgreSQL."""
+        return self.DATABASE_URL.lower().startswith("postgres")
 
 
 settings = Settings()

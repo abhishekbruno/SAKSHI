@@ -57,7 +57,8 @@ class IAuthenticationService(ABC):
         auth_header: Optional[str] = None,
         dev_investigator_id: Optional[str] = None,
         dev_role: Optional[str] = None,
-        dev_jurisdiction: Optional[str] = None
+        dev_jurisdiction: Optional[str] = None,
+        db=None,
     ) -> AuthenticatedInvestigator:
         """
         Validate credentials and return an authenticated investigator.
@@ -198,7 +199,8 @@ class OIDCAuthenticationService(IAuthenticationService):
         auth_header: Optional[str] = None,
         dev_investigator_id: Optional[str] = None,
         dev_role: Optional[str] = None,
-        dev_jurisdiction: Optional[str] = None
+        dev_jurisdiction: Optional[str] = None,
+        db=None,
     ) -> AuthenticatedInvestigator:
         """
         Validate a Bearer JWT token and extract investigator identity.
@@ -385,7 +387,8 @@ class DevAuthenticationService(IAuthenticationService):
         auth_header: Optional[str] = None,
         dev_investigator_id: Optional[str] = None,
         dev_role: Optional[str] = None,
-        dev_jurisdiction: Optional[str] = None
+        dev_jurisdiction: Optional[str] = None,
+        db=None,
     ) -> AuthenticatedInvestigator:
         """
         Development-only authentication.
@@ -477,6 +480,45 @@ class IAuthorizationService(ABC):
         pass
 
     @abstractmethod
+    def check_can_intake_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        pass
+
+    @abstractmethod
+    def check_can_read_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        pass
+
+    @abstractmethod
+    def check_can_validate_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        pass
+
+    @abstractmethod
+    def check_can_scan_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        pass
+
+    @abstractmethod
+    def check_can_commit_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        pass
+
+    @abstractmethod
+    def check_can_verify_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        pass
+
+    @abstractmethod
+    def check_can_object_lock_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        """MOD-10: Verify investigator has 'evidence:object_lock' permission for the given case."""
+        pass
+
+    @abstractmethod
+    def check_can_encrypt_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        """MOD-11: Verify investigator has 'evidence:encrypt' permission for the given case."""
+        pass
+
+    @abstractmethod
+    def check_can_decrypt_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        """MOD-11: Verify investigator has 'evidence:decrypt' permission for the given case."""
+        pass
+
+    @abstractmethod
     def get_case_list_filter(self, investigator: AuthenticatedInvestigator) -> Optional[str]:
         pass
 
@@ -486,10 +528,10 @@ class PolicyEngineAuthorizationService(IAuthorizationService):
     MOD-03: RBAC / ABAC policy evaluator.
 
     Delegates to the centralized PolicyEngine for all authorization decisions.
-    Preserves the IAuthorizationService interface consumed by CaseService.
+    Preserves the IAuthorizationService interface consumed by CaseService, EvidenceIntakeService, MimeValidationService, and AntivirusScanService.
 
     Architecture:
-        CaseService → IAuthorizationService.check_*()
+        CaseService / EvidenceIntakeService / MimeValidationService / AntivirusScanService → IAuthorizationService.check_*()
             → PolicyEngine.evaluate(AuthorizationContext)
                 → AuthorizationDecision (ALLOW / DENY)
     """
@@ -523,6 +565,72 @@ class PolicyEngineAuthorizationService(IAuthorizationService):
     def check_can_assign_io(self, investigator: AuthenticatedInvestigator, target_io_id: str, case: Optional[Case] = None) -> None:
         ctx = self._AuthorizationContext.from_investigator(
             investigator, action="assign", case=case, target_io_id=target_io_id
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_intake_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:create", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_read_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:read", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_validate_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:validate", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_scan_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:scan", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_commit_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:commit", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_verify_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:verify", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_object_lock_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        """MOD-10: Enforce 'evidence:object_lock' permission via PolicyEngine."""
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:object_lock", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_encrypt_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        """MOD-11: Enforce 'evidence:encrypt' permission via PolicyEngine."""
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:encrypt", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_decrypt_evidence(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        """MOD-11: Enforce 'evidence:decrypt' permission via PolicyEngine."""
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="evidence:decrypt", case=case
         )
         decision = self._engine.evaluate(ctx)
         self._audit_and_enforce(decision, investigator)
@@ -585,6 +693,11 @@ def _create_authentication_service() -> IAuthenticationService:
     AUTH_MODE=development → DevAuthenticationService (mock identity, no token validation)
     AUTH_MODE=oidc        → OIDCAuthenticationService (real JWT/OIDC validation)
     """
+    if settings.is_firebase_auth:
+        if not settings.FIREBASE_PROJECT_ID:
+            raise OIDCConfigurationException("AUTH_MODE is 'firebase' but FIREBASE_PROJECT_ID is not configured.")
+        from app.services.firebase_auth_service import FirebaseAuthenticationService
+        return FirebaseAuthenticationService()
     if settings.is_oidc_auth:
         if not settings.OIDC_ISSUER_URL:
             raise OIDCConfigurationException(
@@ -599,14 +712,11 @@ def _create_authentication_service() -> IAuthenticationService:
             cache_ttl=settings.OIDC_JWKS_CACHE_TTL,
             discovery_enabled=settings.OIDC_DISCOVERY_ENABLED,
         )
-    else:
+    if settings.is_development_auth:
         if settings.ENVIRONMENT == "production":
-            log_event(
-                event_type="SECURITY_WARNING",
-                message="⚠️  AUTH_MODE is 'development' in a PRODUCTION environment. "
-                        "This is a security risk. Set AUTH_MODE=oidc for production."
-            )
+            raise OIDCConfigurationException("Development authentication is prohibited in production.")
         return DevAuthenticationService()
+    raise OIDCConfigurationException("AUTH_MODE must be one of development, oidc, or firebase.")
 
 
 # Default singleton instances

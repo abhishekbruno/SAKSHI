@@ -61,6 +61,16 @@ class Permission(str, Enum):
     CASE_LIST = "case:list"
     CASE_ASSIGN = "case:assign"
     CASE_STAGE_UPDATE = "case:stage:update"
+    EVIDENCE_CREATE = "evidence:create"
+    EVIDENCE_READ = "evidence:read"
+    EVIDENCE_LIST = "evidence:list"
+    EVIDENCE_VALIDATE = "evidence:validate"
+    EVIDENCE_SCAN = "evidence:scan"
+    EVIDENCE_COMMIT = "evidence:commit"
+    EVIDENCE_VERIFY = "evidence:verify"
+    EVIDENCE_OBJECT_LOCK = "evidence:object_lock"
+    EVIDENCE_ENCRYPT = "evidence:encrypt"
+    EVIDENCE_DECRYPT = "evidence:decrypt"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -78,6 +88,16 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
+        Permission.EVIDENCE_CREATE,
+        Permission.EVIDENCE_READ,
+        Permission.EVIDENCE_LIST,
+        Permission.EVIDENCE_VALIDATE,
+        Permission.EVIDENCE_SCAN,
+        Permission.EVIDENCE_COMMIT,
+        Permission.EVIDENCE_VERIFY,
+        Permission.EVIDENCE_OBJECT_LOCK,
+        Permission.EVIDENCE_ENCRYPT,
+        Permission.EVIDENCE_DECRYPT,
     }),
     "SUPERVISORY_OFFICER": frozenset({
         Permission.CASE_CREATE,
@@ -86,6 +106,16 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
+        Permission.EVIDENCE_CREATE,
+        Permission.EVIDENCE_READ,
+        Permission.EVIDENCE_LIST,
+        Permission.EVIDENCE_VALIDATE,
+        Permission.EVIDENCE_SCAN,
+        Permission.EVIDENCE_COMMIT,
+        Permission.EVIDENCE_VERIFY,
+        Permission.EVIDENCE_OBJECT_LOCK,
+        Permission.EVIDENCE_ENCRYPT,
+        Permission.EVIDENCE_DECRYPT,
     }),
     "STATION_HEAD": frozenset({
         Permission.CASE_CREATE,
@@ -94,6 +124,16 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
+        Permission.EVIDENCE_CREATE,
+        Permission.EVIDENCE_READ,
+        Permission.EVIDENCE_LIST,
+        Permission.EVIDENCE_VALIDATE,
+        Permission.EVIDENCE_SCAN,
+        Permission.EVIDENCE_COMMIT,
+        Permission.EVIDENCE_VERIFY,
+        Permission.EVIDENCE_OBJECT_LOCK,
+        Permission.EVIDENCE_ENCRYPT,
+        Permission.EVIDENCE_DECRYPT,
     }),
     "ADMIN": frozenset({
         Permission.CASE_CREATE,
@@ -102,6 +142,16 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
+        Permission.EVIDENCE_CREATE,
+        Permission.EVIDENCE_READ,
+        Permission.EVIDENCE_LIST,
+        Permission.EVIDENCE_VALIDATE,
+        Permission.EVIDENCE_SCAN,
+        Permission.EVIDENCE_COMMIT,
+        Permission.EVIDENCE_VERIFY,
+        Permission.EVIDENCE_OBJECT_LOCK,
+        Permission.EVIDENCE_ENCRYPT,
+        Permission.EVIDENCE_DECRYPT,
     }),
     # Backward-compat aliases from existing codebase
     "SUPERVISOR": frozenset({
@@ -111,11 +161,23 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
+        Permission.EVIDENCE_CREATE,
+        Permission.EVIDENCE_READ,
+        Permission.EVIDENCE_LIST,
+        Permission.EVIDENCE_VALIDATE,
+        Permission.EVIDENCE_SCAN,
+        Permission.EVIDENCE_COMMIT,
+        Permission.EVIDENCE_VERIFY,
+        Permission.EVIDENCE_OBJECT_LOCK,
+        Permission.EVIDENCE_ENCRYPT,
+        Permission.EVIDENCE_DECRYPT,
     }),
     "CASE_ADMIN": frozenset({
         Permission.CASE_READ,
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
+        Permission.EVIDENCE_READ,
+        Permission.EVIDENCE_LIST,
     }),
     "SYSTEM_ADMIN": frozenset({
         Permission.CASE_CREATE,
@@ -124,6 +186,12 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
+        Permission.EVIDENCE_CREATE,
+        Permission.EVIDENCE_READ,
+        Permission.EVIDENCE_LIST,
+        Permission.EVIDENCE_VALIDATE,
+        Permission.EVIDENCE_SCAN,
+        Permission.EVIDENCE_COMMIT,
     }),
 }
 
@@ -248,7 +316,7 @@ class AuthorizationContext:
             # Extract jurisdiction from FIR metadata
             fir_meta = getattr(case, "fir_metadata", None)
             if isinstance(fir_meta, dict):
-                ctx.resource_jurisdiction = fir_meta.get("jurisdiction_code") or fir_meta.get("police_station")
+                ctx.resource_jurisdiction = fir_meta.get("jurisdiction_code")
 
         return ctx
 
@@ -384,8 +452,8 @@ class PolicyEngine:
         if action == "assign":
             return self._evaluate_assign_policy(ctx)
 
-        # For read/update/stage_update — check case-level access
-        if action in ("read", "update", "stage_update"):
+        # For read/update/stage_update/evidence actions — check case-level access
+        if action in ("read", "update", "stage_update", "evidence:create", "evidence:read", "evidence:list", "evidence:validate", "evidence:scan", "evidence:commit", "evidence:verify", "evidence:object_lock", "evidence:encrypt", "evidence:decrypt"):
             return self._evaluate_case_access(ctx)
 
         # DEFAULT DENY for unknown actions
@@ -409,12 +477,17 @@ class PolicyEngine:
         """
         is_supervisory = self._is_supervisory(ctx)
 
-        # Policy 1: Supervisory roles have broad access
-        if is_supervisory:
+        # Policy 1: Supervisory access is still constrained to the trusted scope.
+        if is_supervisory and (
+            ctx.subject_jurisdiction == "ALL"
+            or not ctx.resource_jurisdiction
+            or not ctx.subject_jurisdiction
+            or ctx.subject_jurisdiction == ctx.resource_jurisdiction
+        ):
             return AuthorizationDecision(
                 allowed=True,
                 policy_id="CASE_ACCESS_SUPERVISORY",
-                reason="Investigator holds a supervisory role with broad case access.",
+                reason="Investigator holds a supervisory role within the case jurisdiction.",
                 action=ctx.action,
                 subject_id=ctx.subject_id,
                 resource_id=ctx.resource_id,
@@ -424,8 +497,16 @@ class PolicyEngine:
                 },
             )
 
-        # Policy 2: Assigned IO can access their own case
-        if ctx.resource_assigned_io and ctx.subject_id == ctx.resource_assigned_io:
+        # Policy 2: Assigned IO can access their own case within their authorized scope
+        if (
+            ctx.resource_assigned_io
+            and ctx.subject_id == ctx.resource_assigned_io
+            and (
+                not ctx.resource_jurisdiction
+                or not ctx.subject_jurisdiction
+                or ctx.subject_jurisdiction in {"ALL", ctx.resource_jurisdiction}
+            )
+        ):
             return AuthorizationDecision(
                 allowed=True,
                 policy_id="CASE_ACCESS_ASSIGNED_IO",
@@ -543,6 +624,16 @@ class PolicyEngine:
             "list": Permission.CASE_LIST,
             "assign": Permission.CASE_ASSIGN,
             "stage_update": Permission.CASE_STAGE_UPDATE,
+            "evidence:create": Permission.EVIDENCE_CREATE,
+            "evidence:read": Permission.EVIDENCE_READ,
+            "evidence:list": Permission.EVIDENCE_LIST,
+            "evidence:validate": Permission.EVIDENCE_VALIDATE,
+            "evidence:scan": Permission.EVIDENCE_SCAN,
+            "evidence:commit": Permission.EVIDENCE_COMMIT,
+            "evidence:verify": Permission.EVIDENCE_VERIFY,
+            "evidence:object_lock": Permission.EVIDENCE_OBJECT_LOCK,
+            "evidence:encrypt": Permission.EVIDENCE_ENCRYPT,
+            "evidence:decrypt": Permission.EVIDENCE_DECRYPT,
         }
         return mapping.get(action)
 

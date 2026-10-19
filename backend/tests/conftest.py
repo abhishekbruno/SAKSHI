@@ -8,7 +8,6 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from fastapi.testclient import TestClient
 
 from app.db.base import Base
 from app.db.session import get_db
@@ -88,6 +87,15 @@ def auth_headers_supervisor():
     }
 
 
+@pytest.fixture
+def auth_headers_admin():
+    return {
+        "X-Investigator-Id": "ADMIN-0001",
+        "X-Investigator-Role": "ADMIN",
+        "X-Investigator-Jurisdiction": "ALL"
+    }
+
+
 # ─── MOD-01/MOD-02 Compatible Investigator Models ──────────────────────
 # Updated to use subject_id (canonical) while preserving investigator_id alias.
 
@@ -128,3 +136,4 @@ def mock_supervisor():
         is_authenticated=True,
         authentication_method="development",
     )
+from fastapi.testclient import TestClient

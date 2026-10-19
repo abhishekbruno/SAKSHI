@@ -3,194 +3,143 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SAKSHI — Investigation Platform (MOD-01 + MOD-02)</title>
+  <title>SAKSHI — Digital Investigation Workstation</title>
   <link rel="stylesheet" href="style.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script>
+    // Apply saved theme immediately before render to avoid flash
+    const savedTheme = localStorage.getItem("sakshi_theme") || "light";
+    document.documentElement.setAttribute("data-theme", savedTheme);
+  </script>
 </head>
 <body>
-  <div class="app-container">
-    <!-- Header -->
-    <header class="top-nav">
-      <div class="brand">
-        <div class="badge-pulse"></div>
-        <div>
-          <h1>SAKSHI <span class="tag">MOD-01</span><span class="tag tag-mod02">MOD-02</span></h1>
-          <p class="subtitle">EC-MORE Architecture | Phase 1: Case Initiation + Identity/OIDC</p>
+  <div class="app-root">
+    <!-- Sidebar Navigation -->
+    <aside id="appSidebar" class="app-sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo-icon">S</div>
+        <div class="sidebar-brand">
+          <h1>SAKSHI</h1>
+          <div class="tagline">Investigation Workstation</div>
         </div>
       </div>
-      <div class="auth-context">
-        <span id="authModeIndicator" class="auth-mode-badge dev">DEV AUTH</span>
-        <span class="user-role">INVESTIGATING OFFICER</span>
-        <span class="user-id" id="currentUserDisplay">IO-7842-SHARMA</span>
-        <span id="authMethodDisplay" class="auth-method dev-warning">⚠️ DEVELOPMENT ONLY</span>
-        <span class="status-indicator">CONNECTED</span>
-      </div>
-    </header>
 
-    <!-- MOD-02: Development-Only Login Panel -->
-    <section id="devLoginSection" class="card dev-login-card">
-      <div class="card-header">
-        <h3>⚠️ Development Authentication (MOD-02)</h3>
-        <span class="dev-badge">DEVELOPMENT ONLY — NOT FOR PRODUCTION</span>
+      <nav class="sidebar-nav">
+        <div class="nav-section-title">Directory</div>
+        <a href="#/cases" class="nav-link" id="navCases">
+          <span class="icon">📁</span>
+          <span>Case Directory</span>
+        </a>
+        <a href="#/officers" class="nav-link" id="navOfficers">
+          <span class="icon">👮</span>
+          <span>Officer Registry</span>
+        </a>
+
+        <div class="nav-section-title" id="caseWorkspaceSectionTitle">Case Workspace</div>
+        <a href="#/cases/active/overview" class="nav-link" id="navOverview">
+          <span class="icon">📋</span>
+          <span>Case Overview</span>
+        </a>
+        <a href="#/cases/active/evidence" class="nav-link" id="navEvidence">
+          <span class="icon">📦</span>
+          <span>Evidence Workspace</span>
+          <span class="nav-badge" id="navEvidenceCount" style="display:none;">0</span>
+        </a>
+        <a href="#/cases/active/timeline" class="nav-link" id="navTimeline">
+          <span class="icon">⏱️</span>
+          <span>Timeline</span>
+        </a>
+        <a href="#/cases/active/analysis" class="nav-link" id="navAnalysis">
+          <span class="icon">💡</span>
+          <span>Analysis & Reasoning</span>
+        </a>
+        <a href="#/cases/active/gaps" class="nav-link" id="navGaps">
+          <span class="icon">🔍</span>
+          <span>Investigation Gaps</span>
+        </a>
+        <a href="#/cases/active/audit" class="nav-link" id="navAudit">
+          <span class="icon">📜</span>
+          <span>Case Activity & Audit</span>
+        </a>
+
+        <div class="nav-section-title">System</div>
+        <a href="#/settings" class="nav-link" id="navSettings">
+          <span class="icon">⚙️</span>
+          <span>Settings</span>
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="active-case-context" id="sidebarActiveCaseBox">
+          <div class="case-context-label">
+            <span>Active Case</span>
+            <span id="sidebarAttentionBadge" class="badge badge-attention" style="display:none;">!</span>
+          </div>
+          <div class="case-context-id" id="sidebarActiveCaseId">No Case Selected</div>
+          <div class="case-context-stage" id="sidebarActiveCaseStage">Select a case</div>
+        </div>
       </div>
-      <form id="devLoginForm" class="dev-login-form">
-        <div class="grid-3">
-          <div class="form-group">
-            <label for="devSubjectId">Investigator Subject ID</label>
-            <input type="text" id="devSubjectId" value="IO-7842-SHARMA" placeholder="e.g. IO-7842-SHARMA">
-          </div>
-          <div class="form-group">
-            <label for="devRole">Role</label>
-            <select id="devRole" class="form-select">
-              <option value="INVESTIGATING_OFFICER" selected>Investigating Officer</option>
-              <option value="SUPERVISORY_OFFICER">Supervisory Officer</option>
-              <option value="STATION_HEAD">Station Head</option>
-              <option value="ADMIN">Administrator</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="devJurisdiction">Jurisdiction</label>
-            <input type="text" id="devJurisdiction" value="JUR-DEL-04" placeholder="e.g. JUR-DEL-04">
+    </aside>
+
+    <!-- Main Workspace -->
+    <div class="app-main">
+      <!-- Global Topbar -->
+      <header class="app-header">
+        <div class="header-left">
+          <button id="menuToggleBtn" class="menu-toggle-btn" aria-label="Toggle navigation">☰</button>
+          <div class="breadcrumb-trail" id="breadcrumbTrail">
+            <span>SAKSHI</span>
+            <span class="breadcrumb-separator">/</span>
+            <span class="breadcrumb-current" id="breadcrumbCurrent">Case Directory</span>
           </div>
         </div>
-        <button type="submit" class="btn btn-dev">Set Development Identity</button>
-      </form>
-    </section>
 
-    <!-- Main Content Grid -->
-    <main class="main-layout">
-      <!-- Left Column: Case Creation Form -->
-      <section class="card form-card">
-        <div class="card-header">
-          <h2>Initiate Death Investigation</h2>
-          <span class="source-tag">Source: Create Case / Assign IO</span>
-        </div>
-
-        <form id="createCaseForm">
-          <div class="form-group">
-            <label for="caseTitle">Case Title / Legal Matter Reference *</label>
-            <input type="text" id="caseTitle" required placeholder="e.g. Unnatural Death Inquiry - Apartment 4B" value="Unnatural Death Investigation - Central District">
-          </div>
-
-          <div class="section-divider">
-            <span>FIR METADATA (FIRST INFORMATION REPORT)</span>
-          </div>
-
-          <div class="grid-2">
-            <div class="form-group">
-              <label for="firNumber">FIR Number *</label>
-              <input type="text" id="firNumber" required placeholder="e.g. FIR-2026-0428" value="FIR-2026-0814">
-            </div>
-            <div class="form-group">
-              <label for="policeStation">Police Station / Jurisdiction *</label>
-              <input type="text" id="policeStation" required placeholder="e.g. Central Forensic Division" value="Central Forensic Division">
-            </div>
-          </div>
-
-          <div class="grid-2">
-            <div class="form-group">
-              <label for="incidentDate">Incident Date / Time</label>
-              <input type="datetime-local" id="incidentDate" value="2026-09-30T04:15">
-            </div>
-            <div class="form-group">
-              <label for="incidentLocation">Incident Location</label>
-              <input type="text" id="incidentLocation" placeholder="e.g. Hotel Sapphire, Room 304" value="Central Division Sector 4">
-            </div>
-          </div>
-
-          <div class="section-divider">
-            <span>INVESTIGATING OFFICER (IO) ASSOCIATION</span>
-          </div>
-
-          <div class="form-group">
-            <label for="assignedIO">Assigned Investigating Officer ID</label>
-            <input type="text" id="assignedIO" placeholder="Defaults to current IO context" value="IO-7842-SHARMA">
-            <small class="helper-text">Binds human accountability to the case workspace root.</small>
-          </div>
-
-          <button type="submit" class="btn btn-primary" id="submitBtn">
-            <span>Establish Case Workspace & Generate Case ID</span>
+        <div class="header-right">
+          <!-- Dual-Theme Toggle Button -->
+          <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Desk Mode (Light) / Control Room (Dark)">
+            <span id="themeToggleIcon">☀️</span>
+            <span id="themeToggleText">Desk Mode</span>
           </button>
-        </form>
 
-        <!-- Notification Banner -->
-        <div id="statusBanner" class="banner hidden"></div>
-      </section>
-
-      <!-- Right Column: Case Output & Active Investigations -->
-      <section class="dashboard-column">
-        <!-- Success Output Card (Hidden by default) -->
-        <div id="outputCard" class="card output-card hidden">
-          <div class="card-header highlight">
-            <h3>★ Case Workspace Established</h3>
-            <span class="badge-success">PHASE 1 COMPLETE</span>
+          <div class="system-status-indicator" id="systemStatusPill">
+            <span class="status-dot connected" id="systemStatusDot"></span>
+            <span id="systemStatusText">Connected</span>
           </div>
-          <div class="output-body">
-            <div class="metric-row">
-              <span class="metric-label">AUTHORITATIVE CASE ID:</span>
-              <span class="metric-value code" id="outCaseId">SAKSHI-CASE-2026-XXXX</span>
-            </div>
-            <div class="metric-row">
-              <span class="metric-label">WORKSPACE IDENTIFIER:</span>
-              <span class="metric-value code" id="outWorkspaceId">WS-XXXX</span>
-            </div>
-            <div class="metric-row">
-              <span class="metric-label">ASSIGNED IO:</span>
-              <span class="metric-value" id="outAssignedIO">IO-7842-SHARMA</span>
-            </div>
-            <div class="metric-row">
-              <span class="metric-label">LIFECYCLE STAGE:</span>
-              <span class="metric-value stage-tag" id="outStage">INITIALIZED</span>
-            </div>
-            <div class="metric-row">
-              <span class="metric-label">DOWNSTREAM STATUS:</span>
-              <span class="metric-value ready-tag">READY FOR PHASE 02: EVIDENCE INGESTION</span>
-            </div>
 
-            <div class="action-row">
-              <button class="btn btn-secondary" id="viewContractBtn">View Phase 2 Contract JSON</button>
+          <div class="investigator-pill" id="investigatorProfileBtn" title="Investigator Profile & Security Scope">
+            <div class="investigator-avatar" id="headerAvatar">IO</div>
+            <div class="investigator-info">
+              <span class="investigator-name" id="headerInvestigatorId">IO-7842-SHARMA</span>
+              <span class="investigator-role" id="headerInvestigatorRole">Investigating Officer</span>
             </div>
           </div>
+
+          <button id="logoutBtn" class="theme-toggle-btn" title="Sign Out of Workstation">
+            <span>🚪</span>
+            <span>Sign Out</span>
+          </button>
         </div>
+      </header>
 
-        <!-- Cases List -->
-        <div class="card">
-          <div class="card-header">
-            <h3>Active Cases Under Investigation</h3>
-            <button class="btn btn-sm" id="refreshBtn">Refresh</button>
-          </div>
-          <div class="table-container">
-            <table class="cases-table">
-              <thead>
-                <tr>
-                  <th>Case ID</th>
-                  <th>FIR No.</th>
-                  <th>Title</th>
-                  <th>Assigned IO</th>
-                  <th>Stage</th>
-                </tr>
-              </thead>
-              <tbody id="casesTableBody">
-                <tr><td colspan="5" class="empty-state">Loading registered cases...</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Phase 2 Contract Modal / Display -->
-        <div id="contractBox" class="card code-card hidden">
-          <div class="card-header">
-            <h4>Phase 2 Evidence Ingestion Handoff Contract</h4>
-            <button class="btn btn-sm" id="closeContractBtn">Close</button>
-          </div>
-          <pre><code id="contractCode"></code></pre>
-        </div>
-      </section>
-    </main>
+      <!-- Viewport Anchor -->
+      <main id="viewContainer" class="view-viewport">
+        <!-- Rendered dynamically by app.js router -->
+      </main>
+    </div>
   </div>
 
+  <!-- Reusable Modal Container -->
+  <div id="modalContainer" class="modal-backdrop" style="display:none;"></div>
+
+  <!-- Reusable Slide-out Drawer Container -->
+  <div id="drawerContainer" class="drawer-backdrop" style="display:none;"></div>
+
+  <!-- Reusable Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Application Logic -->
   <script src="app.js"></script>
 </body>
 </html>

@@ -258,6 +258,16 @@ class StageEngine:
         """Convenience boolean check."""
         return self.validate_transition(current_stage, target_stage, investigator).valid
 
+    def is_ingestion_permitted(self, current_stage: str) -> bool:
+        """
+        MOD-05 Ingestion Gate Check:
+        Verifies if the case lifecycle stage allows multi-modal evidence intake.
+        Evidence intake is open when stage is EVIDENCE_INGESTION.
+        """
+        stage_key = (current_stage or "").strip().upper()
+        return stage_key == CaseStage.EVIDENCE_INGESTION.value
+
 
 # Singleton StageEngine instance
 stage_engine = StageEngine()
+

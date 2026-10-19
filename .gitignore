@@ -35,3 +35,11 @@ sakshi_cases.db
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Dependencies & Build
+node_modules/
+*/node_modules/
+
+# Test temporary artifacts
+.test-tmp/
+*/.test-tmp/

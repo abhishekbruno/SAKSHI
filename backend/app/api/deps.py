@@ -25,6 +25,7 @@ def get_current_investigator(
     x_investigator_id: Optional[str] = Header(None, alias="X-Investigator-Id"),
     x_investigator_role: Optional[str] = Header(None, alias="X-Investigator-Role"),
     x_investigator_jurisdiction: Optional[str] = Header(None, alias="X-Investigator-Jurisdiction"),
+    db: Session = Depends(get_db),
 ) -> AuthenticatedInvestigator:
     """
     Central authentication dependency.
@@ -40,7 +41,8 @@ def get_current_investigator(
         auth_header=authorization,
         dev_investigator_id=x_investigator_id,
         dev_role=x_investigator_role,
-        dev_jurisdiction=x_investigator_jurisdiction
+        dev_jurisdiction=x_investigator_jurisdiction,
+        db=db,
     )
 
 
@@ -49,10 +51,58 @@ def get_case_service(db: Session = Depends(get_db)) -> CaseService:
     return CaseService(db)
 
 
+def get_evidence_intake_service(db: Session = Depends(get_db)):
+    """Dependency injecting an EvidenceIntakeService instance wired with current DB session."""
+    from app.services.evidence_intake_service import EvidenceIntakeService
+    return EvidenceIntakeService(db)
+
+
+def get_mime_validation_service(db: Session = Depends(get_db)):
+    """Dependency injecting a MimeValidationService instance wired with current DB session."""
+    from app.services.mime_validation_service import MimeValidationService
+    return MimeValidationService(db)
+
+
+def get_antivirus_scan_service(db: Session = Depends(get_db)):
+    """Dependency injecting an AntivirusScanService instance wired with current DB session."""
+    from app.services.antivirus_scan_service import AntivirusScanService
+    return AntivirusScanService(db)
+
+
+def get_worm_commit_service(db: Session = Depends(get_db)):
+    """Dependency injecting a WORMCommitService instance wired with current DB session."""
+    from app.services.worm_commit_service import WORMCommitService
+    return WORMCommitService(db)
+
+
+def get_integrity_service(db: Session = Depends(get_db)):
+    """Dependency injecting an IntegrityService instance wired with current DB session (MOD-09)."""
+    from app.services.integrity_service import IntegrityService
+    return IntegrityService(db)
+
+
+def get_object_lock_service(db: Session = Depends(get_db)):
+    """Dependency injecting an ObjectLockService instance wired with the current DB session (MOD-10)."""
+    from app.services.object_lock_service import ObjectLockService
+    return ObjectLockService(db)
+
+
+def get_encryption_service(db: Session = Depends(get_db)):
+    """Dependency injecting an EncryptionService instance wired with the current DB session (MOD-11)."""
+    from app.services.encryption_service import EncryptionService
+    return EncryptionService(db)
+
+
 def get_authorization_engine():
     """Dependency injecting the centralized MOD-03 PolicyEngine."""
     from app.services.authorization_service import policy_engine
     return policy_engine
+
+
+def get_rag_retrieval_service(db: Session = Depends(get_db)):
+    """Dependency injecting the Phase 4 retrieval service with the request DB session."""
+    from app.services.rag_retrieval_service import RAGRetrievalService
+    return RAGRetrievalService(db)
 
 
 def require_permission(required_permission: str):

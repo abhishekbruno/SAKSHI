@@ -69,7 +69,7 @@ class AuthStatusResponse(BaseModel):
     """
     auth_mode: str = Field(
         ...,
-        description="Current authentication mode: 'development' or 'oidc'"
+        description="Current authentication mode: 'development', 'oidc', or 'firebase'"
     )
     oidc_configured: bool = Field(
         ...,
