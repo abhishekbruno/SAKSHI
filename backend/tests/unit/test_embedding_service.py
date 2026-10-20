@@ -162,6 +162,10 @@ def test_production_sentence_transformer_missing_locally_fails_without_mock(monk
     """Selecting production inference preserves the model-load error rather than downgrading providers."""
     monkeypatch.setattr(settings, "ENVIRONMENT", "production")
     monkeypatch.setattr(settings, "EMBEDDING_PROVIDER", "sentence_transformer")
+    # Use a model name that is guaranteed to be absent from the local cache.
+    # The real all-MiniLM-L6-v2 weights may or may not be cached; using a
+    # non-existent model isolates the test from local provisioning state.
+    monkeypatch.setattr(settings, "EMBEDDING_MODEL_NAME", "sentence-transformers/absent-model-for-test")
     service = EmbeddingService()
     assert isinstance(service.provider, SentenceTransformerEmbeddingProvider)
     with pytest.raises(EmbeddingModelLoadException):

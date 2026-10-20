@@ -11,9 +11,10 @@ from app.db.session import create_db_engine
 from app.db.verify_connection import redact_db_url, verify_database_connection
 
 
-def test_settings_sqlite_defaults():
+def test_settings_sqlite_defaults(monkeypatch):
     """Verify default Settings selects SQLite and default connection pool values."""
-    s = Settings()
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    s = Settings(_env_file=None)
     assert s.is_sqlite is True
     assert s.is_postgres is False
     assert s.DATABASE_URL.startswith("sqlite")

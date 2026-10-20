@@ -337,6 +337,15 @@ const Api = {
     return this.handleResponse(res, "Verifying encryption authenticity");
   },
 
+  async searchRAG(caseId, query, limit = 5) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/rag/search`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: JSON.stringify({ query, limit })
+    });
+    return this.handleResponse(res, "Evidence RAG Search");
+  },
+
   async getHealth() {
     try {
       const res = await fetch(`/health`);
@@ -429,6 +438,16 @@ const Formatters = {
     if (!str) return "";
     if (str.length <= max) return str;
     return str.substring(0, max) + "...";
+  },
+
+  escapeHtml(str) {
+    if (str === null || str === undefined) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#039;");
   }
 };
 
@@ -519,6 +538,7 @@ const Router = {
     { pattern: /^#\/cases\/active\/([a-z]+)$/, handler: (match) => Router.routeActiveTab(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/overview$/, handler: (match) => ScreenCaseOverview.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/evidence$/, handler: (match) => ScreenEvidence.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/rag$/, handler: (match) => ScreenRAGSearch.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/timeline$/, handler: (match) => ScreenTimeline.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/analysis$/, handler: (match) => ScreenAnalysis.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/gaps$/, handler: (match) => ScreenGaps.render(match[1]) },
@@ -575,6 +595,7 @@ function updateSidebarActiveLink(hash) {
   if (hash.startsWith("#/cases/") && !hash.endsWith("#/cases")) {
     if (hash.includes("/overview")) document.getElementById("navOverview")?.classList.add("active");
     else if (hash.includes("/evidence")) document.getElementById("navEvidence")?.classList.add("active");
+    else if (hash.includes("/rag")) document.getElementById("navRAG")?.classList.add("active");
     else if (hash.includes("/timeline")) document.getElementById("navTimeline")?.classList.add("active");
     else if (hash.includes("/analysis")) document.getElementById("navAnalysis")?.classList.add("active");
     else if (hash.includes("/gaps")) document.getElementById("navGaps")?.classList.add("active");
@@ -1299,6 +1320,9 @@ function renderWorkspaceHeaderHtml(activeTab) {
       </button>
       <button class="tab-btn ${activeTab === 'evidence' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/evidence'">
         📦 Evidence Workspace (${State.evidence ? State.evidence.length : 0})
+      </button>
+      <button class="tab-btn ${activeTab === 'rag' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/rag'">
+        🔎 Evidence Search (RAG)
       </button>
       <button class="tab-btn ${activeTab === 'timeline' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/timeline'">
         ⏱️ Timeline
@@ -2915,6 +2939,284 @@ const ScreenAnalysis = {
     `;
 
     UI.openModal(`Reasoning Trace &bull; ${title}`, bodyHtml, `<button class="btn btn-primary" onclick="UI.closeModal()">Understood</button>`);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11b. SCREEN 5b: EVIDENCE RAG SEARCH (Route: #/cases/:id/rag)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ScreenRAGSearch = {
+  lastQuery: "",
+  lastResults: null,
+  isLoading: false,
+  error: null,
+
+  async render(caseId) {
+    const container = document.getElementById("viewContainer");
+    document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Evidence RAG Search`;
+
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      container.innerHTML = `
+        <div class="card" style="padding: 24px; text-align: center; margin: 30px auto; max-width: 600px;">
+          <h3>Case Access Error</h3>
+          <p style="color: var(--text-muted); margin: 12px 0;">Unable to access case ${Formatters.escapeHtml(caseId)}: ${Formatters.escapeHtml(err.message)}</p>
+          <button class="btn btn-primary" onclick="window.location.hash='#/cases'">Return to Case Directory</button>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = `
+      ${renderWorkspaceHeaderHtml("rag")}
+
+      <div class="cases-toolbar">
+        <div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Evidence RAG Semantic Search</h3>
+          <p style="color: var(--text-muted); font-size: 0.82rem;">Neural vector similarity retrieval across verified case documents and ballistic/forensic exhibits.</p>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <span class="badge badge-info" id="ragRetrievalModeBadge">PostgreSQL / pgvector Ready</span>
+        </div>
+      </div>
+
+      <!-- Evidentiary Provenance Notice -->
+      <div class="human-governance-notice">
+        <span style="font-size: 1.2rem;">⚖️</span>
+        <div>
+          <strong>Evidentiary Provenance Notice:</strong>
+          <span> Retrieved passages are verified forensic source materials from the case docket, scored by cosine vector similarity. SAKSHI retrieves original text with cryptographic fingerprints; it never fabricates or summarizes content.</span>
+        </div>
+      </div>
+
+      <!-- Search Input Card -->
+      <div class="card" style="padding: 20px; margin-bottom: 20px;">
+        <form id="ragSearchForm" onsubmit="event.preventDefault(); ScreenRAGSearch.handleSearch('${caseId}');">
+          <div style="display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 280px;">
+              <input
+                type="text"
+                id="ragQueryInput"
+                class="form-control"
+                placeholder="Enter forensic inquiry (e.g. ballistic trajectory 9mm, vehicle speeding northbound, CDR tower data)..."
+                value="${Formatters.escapeHtml(ScreenRAGSearch.lastQuery)}"
+                required
+                style="height: 44px; font-size: 0.95rem;"
+              />
+              <div id="ragQueryValidation" style="color: var(--danger); font-size: 0.78rem; margin-top: 4px; display: none;"></div>
+            </div>
+            <div style="width: 150px;">
+              <select id="ragLimitSelect" class="form-control" style="height: 44px; font-size: 0.88rem;">
+                <option value="5" selected>Top 5 Passages</option>
+                <option value="10">Top 10 Passages</option>
+                <option value="20">Top 20 Passages</option>
+              </select>
+            </div>
+            <div>
+              <button type="submit" id="ragSubmitBtn" class="btn btn-primary" style="height: 44px; padding: 0 20px; font-weight: 600;">
+                <span class="icon">🔎</span> Search Exhibits
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+
+      <!-- Results Container -->
+      <div id="ragResultsArea">
+        ${ScreenRAGSearch.renderResultsHtml()}
+      </div>
+    `;
+
+    const inputEl = document.getElementById("ragQueryInput");
+    if (inputEl && !ScreenRAGSearch.lastQuery) {
+      inputEl.focus();
+    }
+  },
+
+  async handleSearch(caseId) {
+    const queryInput = document.getElementById("ragQueryInput");
+    const limitSelect = document.getElementById("ragLimitSelect");
+    const validationEl = document.getElementById("ragQueryValidation");
+    const submitBtn = document.getElementById("ragSubmitBtn");
+    const resultsArea = document.getElementById("ragResultsArea");
+
+    const query = (queryInput ? queryInput.value : "").trim();
+    const limit = parseInt(limitSelect ? limitSelect.value : "5", 10) || 5;
+
+    if (!query) {
+      if (validationEl) {
+        validationEl.textContent = "Please enter non-whitespace search terms.";
+        validationEl.style.display = "block";
+      }
+      return;
+    }
+    if (validationEl) validationEl.style.display = "none";
+
+    ScreenRAGSearch.lastQuery = query;
+    ScreenRAGSearch.isLoading = true;
+    ScreenRAGSearch.error = null;
+
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<span class="icon">⏳</span> Searching...`;
+    }
+
+    if (resultsArea) {
+      resultsArea.innerHTML = `
+        <div class="card" style="padding: 40px; text-align: center;">
+          <div style="font-size: 2rem; margin-bottom: 12px;">🔍</div>
+          <h4 style="color: var(--text-main); margin-bottom: 6px;">Computing Neural Embeddings & Vector Proximity...</h4>
+          <p style="color: var(--text-muted); font-size: 0.85rem;">Searching pgvector HNSW index across verified exhibits for case ${Formatters.escapeHtml(caseId)}.</p>
+        </div>
+      `;
+    }
+
+    try {
+      const response = await Api.searchRAG(caseId, query, limit);
+      ScreenRAGSearch.lastResults = response;
+      ScreenRAGSearch.isLoading = false;
+
+      const modeBadge = document.getElementById("ragRetrievalModeBadge");
+      if (modeBadge && response.query_metadata) {
+        modeBadge.textContent = response.query_metadata.retrieval_mode;
+      }
+
+      UI.recordAudit("RAG_SEARCH_PERFORMED", caseId, "SUCCESS", `Retrieved ${response.result_count} passages (mode: ${response.query_metadata?.retrieval_mode})`);
+    } catch (err) {
+      ScreenRAGSearch.isLoading = false;
+      ScreenRAGSearch.error = err.message || "Retrieval failed";
+      ScreenRAGSearch.lastResults = null;
+      UI.recordAudit("RAG_SEARCH_FAILED", caseId, "FAILED", err.message);
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<span class="icon">🔎</span> Search Exhibits`;
+      }
+      if (resultsArea) {
+        resultsArea.innerHTML = ScreenRAGSearch.renderResultsHtml();
+      }
+    }
+  },
+
+  renderResultsHtml() {
+    if (ScreenRAGSearch.isLoading) return "";
+
+    if (ScreenRAGSearch.error) {
+      return `
+        <div class="card" style="padding: 24px; border-left: 4px solid var(--danger);">
+          <div style="display: flex; gap: 12px; align-items: center;">
+            <span style="font-size: 1.5rem; color: var(--danger);">⚠️</span>
+            <div>
+              <h4 style="color: var(--danger); margin-bottom: 4px;">Retrieval Error</h4>
+              <p style="color: var(--text-secondary); font-size: 0.88rem;">${Formatters.escapeHtml(ScreenRAGSearch.error)}</p>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const res = ScreenRAGSearch.lastResults;
+    if (!res) {
+      return `
+        <div class="card" style="padding: 40px; text-align: center; color: var(--text-muted);">
+          <div style="font-size: 2.2rem; margin-bottom: 8px;">📑</div>
+          <h4 style="color: var(--text-main); margin-bottom: 6px;">No Search Executed Yet</h4>
+          <p style="font-size: 0.85rem; max-width: 500px; margin: 0 auto;">
+            Enter keywords or witness phrases above to retrieve authenticated excerpts directly from committed case exhibits with full cryptographic provenance.
+          </p>
+        </div>
+      `;
+    }
+
+    const { query_metadata, result_count, results, empty_result_notice, score_semantics } = res;
+
+    let metaHtml = `
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 10px;">
+        <div style="font-size: 0.88rem; color: var(--text-secondary);">
+          <strong>${result_count}</strong> passage${result_count === 1 ? '' : 's'} retrieved
+          &bull; Mode: <span class="badge ${query_metadata.retrieval_mode.includes('postgres') ? 'badge-verified' : 'badge-attention'}" style="font-family: var(--font-mono);">${Formatters.escapeHtml(query_metadata.retrieval_mode)}</span>
+          &bull; Model: <span style="font-family: var(--font-mono); font-size: 0.82rem;">${Formatters.escapeHtml(query_metadata.embedding_model)} (${query_metadata.embedding_dimension}d)</span>
+        </div>
+        <div style="font-size: 0.78rem; color: var(--text-muted); font-style: italic;">
+          ${Formatters.escapeHtml(score_semantics)}
+        </div>
+      </div>
+    `;
+
+    if (result_count === 0 || !results || results.length === 0) {
+      return `
+        ${metaHtml}
+        <div class="card" style="padding: 30px; text-align: center; background: var(--bg-card-subtle);">
+          <div style="font-size: 1.8rem; margin-bottom: 6px;">🔍</div>
+          <h4 style="color: var(--text-main); margin-bottom: 6px;">No Relevant Passages Found</h4>
+          <p style="color: var(--text-secondary); font-size: 0.85rem; max-width: 600px; margin: 0 auto;">
+            ${Formatters.escapeHtml(empty_result_notice || "No eligible indexed passage was returned. This does not establish that no relevant evidence exists.")}
+          </p>
+        </div>
+      `;
+    }
+
+    const cardsHtml = results.map((item, idx) => {
+      const scoreBadgeClass = item.similarity_score > 0.4 ? 'badge-verified' : item.similarity_score > 0.2 ? 'badge-info' : 'badge-neutral';
+
+      return `
+        <div class="card" style="padding: 18px 20px; margin-bottom: 16px; border-left: 3px solid var(--primary);">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+              <span class="badge badge-info" style="font-weight: 700;">#${idx + 1}</span>
+              <span style="font-weight: 700; color: var(--text-main); font-size: 0.95rem;">
+                📄 ${Formatters.escapeHtml(item.source_name)}
+              </span>
+              <span class="badge badge-neutral" style="font-family: var(--font-mono); font-size: 0.74rem;">
+                Ex: ${Formatters.escapeHtml(item.evidence_id)}
+              </span>
+              ${item.page_number != null ? `
+                <span class="badge badge-neutral" style="font-size: 0.74rem;">
+                  Page ${item.page_number}
+                </span>
+              ` : ''}
+              ${item.char_start != null && item.char_end != null ? `
+                <span class="badge badge-neutral" style="font-size: 0.74rem; font-family: var(--font-mono);">
+                  Offsets: ${item.char_start}–${item.char_end}
+                </span>
+              ` : ''}
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 6px;">
+              <span style="font-size: 0.78rem; color: var(--text-muted);">Cosine Similarity:</span>
+              <span class="badge ${scoreBadgeClass}" style="font-family: var(--font-mono); font-weight: 700;">
+                ${item.similarity_score.toFixed(4)}
+              </span>
+            </div>
+          </div>
+
+          <!-- Passage Content -->
+          <div style="background: var(--bg-card-subtle); padding: 14px 16px; border-radius: var(--radius-md); font-size: 0.9rem; line-height: 1.6; color: var(--text-main); margin-bottom: 12px; border: 1px solid var(--border-subtle); white-space: pre-wrap; font-family: var(--font-sans);">
+${Formatters.escapeHtml(item.passage)}
+          </div>
+
+          <!-- Cryptographic Citation & Provenance Bar -->
+          <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.74rem; color: var(--text-muted); font-family: var(--font-mono); border-top: 1px solid var(--border-subtle); padding-top: 8px; flex-wrap: wrap; gap: 8px;">
+            <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+              <span><strong>Chunk ID:</strong> ${Formatters.escapeHtml(item.chunk_id)}</span>
+              <span><strong>Doc ID:</strong> ${Formatters.escapeHtml(item.document_id)}</span>
+              <span><strong>SHA-256:</strong> <span title="${Formatters.escapeHtml(item.source_sha256)}">${Formatters.escapeHtml(item.source_sha256.substring(0, 16))}...</span></span>
+              ${item.source_sha3_512 ? `<span><strong>SHA3-512:</strong> <span title="${Formatters.escapeHtml(item.source_sha3_512)}">${Formatters.escapeHtml(item.source_sha3_512.substring(0, 16))}...</span></span>` : ''}
+            </div>
+            <div>
+              <span>Pipeline: ${Formatters.escapeHtml(item.processing_version || 'v1.0')}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    return `
+      ${metaHtml}
+      ${cardsHtml}
+    `;
   }
 };
 
