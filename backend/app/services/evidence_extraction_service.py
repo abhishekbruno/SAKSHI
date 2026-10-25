@@ -31,6 +31,7 @@ from app.core.errors import (
     ForbiddenException,
 )
 from app.core.logging import log_event
+from app.core.config import settings
 from app.services.auth_service import IAuthorizationService, authorization_service
 from app.services.rag_indexing_service import RAGIndexingService
 from app.services.rag_retrieval_service import RAGRetrievalService
@@ -357,8 +358,11 @@ class EvidenceExtractionService:
         temporal_conflicts: List[dict] = []
         event_num = 1
 
-        # Check if this is test case SAKSHI-TEST-2026-002 with preserved synthetic PDF
-        is_synthetic_test_case = case_id == "SAKSHI-TEST-2026-002"
+        # Check if this is test case SAKSHI-TEST-2026-002 with preserved synthetic PDF (dev/test only)
+        is_synthetic_test_case = (
+            case_id == "SAKSHI-TEST-2026-002"
+            and getattr(settings, "ENVIRONMENT", "development") != "production"
+        )
 
         if is_synthetic_test_case:
             # Reconstruct verified events grounded in the synthetic test fixture
@@ -1276,8 +1280,13 @@ class EvidenceExtractionService:
                 legal_caution="Subject to Section 63 BSA / Section 65B IEA certificate of electronic authenticity.",
             ))
 
-        # Check for synthetic test case phrase
-        if case_id == "SAKSHI-TEST-2026-002" and not citations and "BLUE ORCHID" in question:
+        # Check for synthetic test case phrase (dev/test only)
+        if (
+            case_id == "SAKSHI-TEST-2026-002"
+            and getattr(settings, "ENVIRONMENT", "development") != "production"
+            and not citations
+            and "BLUE ORCHID" in question
+        ):
             citations.append(RAGExcerptCitation(
                 evidence_id="SAKSHI-EVID-2026-E51D496A",
                 exhibit_id="SAKSHI-EVID-2026-E51D496A",

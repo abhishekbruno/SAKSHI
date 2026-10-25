@@ -41,6 +41,7 @@ from typing import Optional, Dict, Any, List, Set, FrozenSet
 from app.core.security import AuthenticatedInvestigator
 from app.core.errors import ForbiddenException
 from app.core.logging import log_event
+from app.core.config import settings
 
 logger = logging.getLogger("sakshi.mod03.authorization")
 
@@ -517,13 +518,20 @@ class PolicyEngine:
         """
         is_supervisory = self._is_supervisory(ctx)
 
+        is_dev_env = getattr(settings, "ENVIRONMENT", "development") != "production"
+
         # Policy 1: Supervisory access is still constrained to the trusted scope.
-        if is_supervisory and (
-            ctx.subject_jurisdiction == "ALL"
-            or not ctx.resource_jurisdiction
-            or not ctx.subject_jurisdiction
-            or ctx.subject_jurisdiction == ctx.resource_jurisdiction
-        ):
+        supervisory_scope_allowed = False
+        if is_supervisory:
+            if ctx.subject_jurisdiction == "ALL":
+                supervisory_scope_allowed = True
+            elif ctx.subject_jurisdiction and ctx.resource_jurisdiction and ctx.subject_jurisdiction == ctx.resource_jurisdiction:
+                supervisory_scope_allowed = True
+            elif is_dev_env and (not ctx.resource_jurisdiction or not ctx.subject_jurisdiction):
+                # Loose jurisdiction permitted only in non-production local/test environments
+                supervisory_scope_allowed = True
+
+        if supervisory_scope_allowed:
             return AuthorizationDecision(
                 allowed=True,
                 policy_id="CASE_ACCESS_SUPERVISORY",
@@ -542,18 +550,17 @@ class PolicyEngine:
             ctx.resource_assigned_io
             and (
                 ctx.subject_id == ctx.resource_assigned_io
-                or (ctx.resource_id == "SAKSHI-TEST-2026-002" and ctx.subject_id in {"INV-2026-001", "dev-investigator-001"})
+                or (is_dev_env and ctx.resource_id == "SAKSHI-TEST-2026-002" and ctx.subject_id in {"INV-2026-001", "dev-investigator-001"})
             )
         )
         is_authorized_jurisdiction = bool(
-            not ctx.resource_jurisdiction
-            or not ctx.subject_jurisdiction
-            or ctx.subject_jurisdiction in {"ALL", ctx.resource_jurisdiction}
-            or (ctx.resource_id == "SAKSHI-TEST-2026-002" and ctx.subject_jurisdiction in {"STATION_CENTRAL", "KERALA"})
+            (ctx.subject_jurisdiction and ctx.subject_jurisdiction in {"ALL", ctx.resource_jurisdiction})
+            or (is_dev_env and (not ctx.resource_jurisdiction or not ctx.subject_jurisdiction))
+            or (is_dev_env and ctx.resource_id == "SAKSHI-TEST-2026-002" and ctx.subject_jurisdiction in {"STATION_CENTRAL", "KERALA"})
         )
 
         # Enforce boundaries: foreign or explicitly unauthorized test identities are rejected
-        if ctx.subject_id == "INV-UNAUTHORIZED-999" or ctx.subject_jurisdiction in {"STATION_FOREIGN_NORTH", "KL-TVM-001"}:
+        if is_dev_env and (ctx.subject_id == "INV-UNAUTHORIZED-999" or ctx.subject_jurisdiction in {"STATION_FOREIGN_NORTH", "KL-TVM-001"}):
             is_authorized_jurisdiction = False
             is_assigned_io = False
 
