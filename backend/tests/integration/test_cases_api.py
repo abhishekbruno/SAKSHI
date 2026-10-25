@@ -130,3 +130,101 @@ def test_phase2_integration_contract_endpoint(client, auth_headers_io1):
     assert contract["authorized_io_id"] == auth_headers_io1["X-Investigator-Id"]
     assert contract["lifecycle_stage"] == "INITIALIZED"
     assert contract["case_workspace_boundary"]["ingestion_gate_open"] is True
+
+
+def test_create_case_with_investigator_role_alias(client):
+    """Verify that development role INVESTIGATOR normalizes to INVESTIGATING_OFFICER and succeeds."""
+    headers = {
+        "X-Investigator-Id": "dev-investigator-001",
+        "X-Investigator-Role": "INVESTIGATOR",
+        "X-Investigator-Jurisdiction": "KERALA",
+    }
+    payload = {
+        "title": "Development Verification Case",
+        "fir_metadata": {
+            "fir_number": "FIR-DEV-2026-001",
+            "police_station": "Kowdiar Station",
+            "jurisdiction_code": "KERALA",
+        },
+    }
+    response = client.post("/api/v1/cases", json=payload, headers=headers)
+    assert response.status_code == status.HTTP_201_CREATED
+    data = response.json()
+    assert data["case_id"].startswith("SAKSHI-CASE-")
+    assert data["assigned_io_id"] == "dev-investigator-001"
+    assert data["lifecycle_stage"] == "INITIALIZED"
+
+
+def test_create_case_unauthorized_role_rejected(client):
+    """Verify that an authenticated role lacking CASE_CREATE receives HTTP 403."""
+    headers = {
+        "X-Investigator-Id": "IO-READONLY-01",
+        "X-Investigator-Role": "CASE_ADMIN",
+        "X-Investigator-Jurisdiction": "JUR-DEL-04",
+    }
+    payload = {
+        "title": "Unauthorized Case Creation Attempt",
+        "fir_metadata": {
+            "fir_number": "FIR-UNAUTH-001",
+            "police_station": "South District Police Station",
+            "jurisdiction_code": "JUR-DEL-04",
+        },
+    }
+    response = client.post("/api/v1/cases", json=payload, headers=headers)
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    error = response.json()
+    assert error["error_code"] == "FORBIDDEN"
+
+
+def test_create_case_outside_jurisdiction_rejected(client):
+    """Verify that a non-supervisory investigator cannot create a case outside their authorized jurisdiction."""
+    headers = {
+        "X-Investigator-Id": "IO-7842-SHARMA",
+        "X-Investigator-Role": "INVESTIGATING_OFFICER",
+        "X-Investigator-Jurisdiction": "JUR-DEL-04",
+    }
+    payload = {
+        "title": "Cross-Jurisdiction Case Attempt",
+        "fir_metadata": {
+            "fir_number": "FIR-CROSS-JUR-001",
+            "police_station": "Mumbai Central",
+            "jurisdiction_code": "JUR-MUM-01",
+        },
+    }
+    response = client.post("/api/v1/cases", json=payload, headers=headers)
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    error = response.json()
+    assert error["error_code"] == "FORBIDDEN"
+
+
+def test_create_case_supervisory_any_jurisdiction_allowed(client, auth_headers_supervisor):
+    """Verify that a supervisory officer with ALL jurisdiction can create cases across jurisdictions."""
+    payload = {
+        "title": "State-Level Investigation Case",
+        "fir_metadata": {
+            "fir_number": "FIR-STATE-001",
+            "police_station": "Any Station",
+            "jurisdiction_code": "JUR-MUM-01",
+        },
+    }
+    response = client.post("/api/v1/cases", json=payload, headers=auth_headers_supervisor)
+    assert response.status_code == status.HTTP_201_CREATED
+    data = response.json()
+    assert data["case_id"].startswith("SAKSHI-CASE-")
+
+
+def test_create_case_disallowed_assignment_rejected(client, auth_headers_io1):
+    """Verify that a regular IO cannot assign a new case to another IO."""
+    payload = {
+        "title": "Unauthorized Assignment Case",
+        "fir_metadata": {
+            "fir_number": "FIR-ASSIGN-001",
+            "police_station": "South District",
+            "jurisdiction_code": "JUR-DEL-04",
+        },
+        "assigned_io_id": "IO-DIFFERENT-OFFICER",
+    }
+    response = client.post("/api/v1/cases", json=payload, headers=auth_headers_io1)
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+    error = response.json()
+    assert error["error_code"] == "FORBIDDEN"

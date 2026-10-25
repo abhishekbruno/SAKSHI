@@ -75,6 +75,12 @@ def get_worm_commit_service(db: Session = Depends(get_db)):
     return WORMCommitService(db)
 
 
+def get_evidence_pipeline_orchestrator(db: Session = Depends(get_db)):
+    """Dependency injecting the MOD-05 through MOD-08 composite orchestrator."""
+    from app.services.evidence_pipeline_orchestrator import EvidencePipelineOrchestrator
+    return EvidencePipelineOrchestrator(db)
+
+
 def get_integrity_service(db: Session = Depends(get_db)):
     """Dependency injecting an IntegrityService instance wired with current DB session (MOD-09)."""
     from app.services.integrity_service import IntegrityService
@@ -97,6 +103,12 @@ def get_authorization_engine():
     """Dependency injecting the centralized MOD-03 PolicyEngine."""
     from app.services.authorization_service import policy_engine
     return policy_engine
+
+
+def get_rag_indexing_service(db: Session = Depends(get_db)):
+    """Dependency injecting RAGIndexingService wired with the current DB session."""
+    from app.services.rag_indexing_service import RAGIndexingService
+    return RAGIndexingService(db)
 
 
 def get_rag_retrieval_service(db: Session = Depends(get_db)):
@@ -125,6 +137,11 @@ def require_permission(required_permission: str):
 
         if required_permission not in effective_perms:
             raise ForbiddenException(f"Access denied: missing required permission '{required_permission}'.")
-        return investigator
-
     return _dependency
+
+
+def get_evidence_extraction_service(db: Session = Depends(get_db)):
+    """Dependency injecting EvidenceExtractionService wired with current DB session."""
+    from app.services.evidence_extraction_service import EvidenceExtractionService
+    return EvidenceExtractionService(db)
+

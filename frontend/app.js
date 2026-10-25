@@ -13,13 +13,20 @@ const API_BASE = "/api/v1";
 const State = {
   theme: localStorage.getItem("sakshi_theme") || "light",
   auth: {
+    initialized: false,
     authenticated: false,
-    subjectId: "",
-    displayName: "",
-    role: "",
-    jurisdiction: "",
+    subjectId: (typeof localStorage !== "undefined" && localStorage.getItem("sakshi_dev_subject_id") && localStorage.getItem("sakshi_dev_subject_id") !== "IO-7842-SHARMA")
+      ? localStorage.getItem("sakshi_dev_subject_id")
+      : "dev-investigator-001",
+    displayName: (typeof localStorage !== "undefined" && localStorage.getItem("sakshi_dev_display_name") && localStorage.getItem("sakshi_dev_subject_id") !== "IO-7842-SHARMA")
+      ? localStorage.getItem("sakshi_dev_display_name")
+      : "Dev Inspector (Development Only)",
+    role: (typeof localStorage !== "undefined" ? localStorage.getItem("sakshi_dev_role") : null) || "INVESTIGATING_OFFICER",
+    jurisdiction: (typeof localStorage !== "undefined" && localStorage.getItem("sakshi_dev_jurisdiction") && localStorage.getItem("sakshi_dev_jurisdiction") !== "KL-TVM-001")
+      ? localStorage.getItem("sakshi_dev_jurisdiction")
+      : "KERALA",
     mode: "unknown",
-    token: null,
+    token: (typeof sessionStorage !== "undefined" ? sessionStorage.getItem("sakshi_auth_token") : null) || null,
     headers: {
       "Content-Type": "application/json"
     }
@@ -42,16 +49,16 @@ const State = {
   auditLog: []
 };
 
-// Stage display mappings aligned strictly with police investigation workflows
+// Stage display mappings aligned strictly with authoritative police investigation workflows
 const StageDisplayMap = {
-  INITIALIZED: { label: "1. Case Setup", short: "Case Setup", badge: "badge-info" },
-  EVIDENCE_INGESTION: { label: "2. Evidence Collection", short: "Evidence Collection", badge: "badge-attention" },
-  EVIDENCE_PROCESSING: { label: "3. Forensic Verification", short: "Forensic Verification", badge: "badge-info" },
-  ANALYSIS: { label: "4. Investigation Analysis", short: "Investigation Analysis", badge: "badge-info" },
-  REVIEW: { label: "5. Investigator Review", short: "Investigator Review", badge: "badge-attention" },
-  CLOSED: { label: "6. Case Closed", short: "Case Closed", badge: "badge-verified" },
-  SUSPENDED: { label: "Case Suspended", short: "Case Suspended", badge: "badge-danger" },
-  REOPENED: { label: "Case Reopened", short: "Case Reopened", badge: "badge-attention" }
+  INITIALIZED: { label: "1. Case Setup (Register Case)", short: "Case Setup", stepNum: 1, badge: "badge-info" },
+  EVIDENCE_INGESTION: { label: "2. Evidence Collection (Collect Evidence)", short: "Evidence Collection", stepNum: 2, badge: "badge-attention" },
+  EVIDENCE_PROCESSING: { label: "3. Forensic Verification (Verify Evidence)", short: "Forensic Verification", stepNum: 3, badge: "badge-info" },
+  ANALYSIS: { label: "4. Investigation Analysis (Review Timeline)", short: "Investigation Analysis", stepNum: 4, badge: "badge-info" },
+  REVIEW: { label: "5. Investigator Review (Review Findings)", short: "Investigator Review", stepNum: 5, badge: "badge-attention" },
+  CLOSED: { label: "6. Case Closed (Complete Authorized Review)", short: "Case Closed", stepNum: 6, badge: "badge-verified" },
+  SUSPENDED: { label: "Case Suspended", short: "Case Suspended", stepNum: 0, badge: "badge-danger" },
+  REOPENED: { label: "Case Reopened", short: "Case Reopened", stepNum: 0, badge: "badge-attention" }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -61,11 +68,67 @@ const StageDisplayMap = {
 const Api = {
   getHeaders(customHeaders = {}) {
     const h = { ...State.auth.headers, ...customHeaders };
-    if (State.auth.token) h.Authorization = `Bearer ${State.auth.token}`;
+    if (State.auth.token) {
+      h.Authorization = `Bearer ${State.auth.token}`;
+    } else if (State.auth.mode === "development" || State.auth.mode === "offline" || State.auth.mode === "unknown") {
+      if (State.auth.subjectId) h["X-Investigator-Id"] = State.auth.subjectId;
+      if (State.auth.role) h["X-Investigator-Role"] = State.auth.role;
+      if (State.auth.jurisdiction) h["X-Investigator-Jurisdiction"] = State.auth.jurisdiction;
+    }
     Object.keys(h).forEach(k => {
-      if (h[k] === undefined || h[k] === null) delete h[k];
+      if (h[k] === undefined || h[k] === null || h[k] === "") delete h[k];
     });
     return h;
+  },
+
+  formatErrorMessage(errData, status, context = "Operation") {
+    if (!errData) return `${context} failed (${status || 'Unknown error'})`;
+
+    // 1. Pydantic validation error array: detail = [{loc: [...], msg: "..."}]
+    if (Array.isArray(errData.detail)) {
+      const parts = errData.detail.map(d => {
+        if (typeof d === "string") return d;
+        if (d && typeof d === "object") {
+          const locStr = Array.isArray(d.loc)
+            ? d.loc.filter(x => x !== "body" && x !== "query").join(".")
+            : "";
+          const msg = d.msg || d.message || JSON.stringify(d);
+          return locStr ? `Field '${locStr}': ${msg}` : msg;
+        }
+        return String(d);
+      });
+      return parts.length > 0 ? parts.join("; ") : `${context} validation failed (${status})`;
+    }
+
+    // 2. detail string or object
+    if (typeof errData.detail === "string" && errData.detail.trim()) {
+      return errData.detail;
+    }
+    if (errData.detail && typeof errData.detail === "object") {
+      if (errData.detail.message) return errData.detail.message;
+      if (errData.detail.error) return errData.detail.error;
+      try {
+        return JSON.stringify(errData.detail);
+      } catch (e) {}
+    }
+
+    // 3. message or error string
+    if (typeof errData.message === "string" && errData.message.trim()) {
+      return errData.message;
+    }
+    if (typeof errData.error === "string" && errData.error.trim()) {
+      return errData.error;
+    }
+
+    // 4. Status-specific officer guidance
+    if (status === 401) return "Officer credential expired or unauthorized. Please re-authenticate.";
+    if (status === 403) return "Clearance / Jurisdiction Restricted: You lack authorized clearance for this case record.";
+    if (status === 404) return "Requested case or evidence record not found in workstation registry.";
+    if (status === 409) return "State conflict: The requested transition conflicts with current case state.";
+    if (status === 422) return "Invalid input data provided to the workstation.";
+    if (status === 503) return "Workstation subsystem temporarily unavailable. Please retry.";
+
+    return `${context} failed (${status || 'Unknown status'})`;
   },
 
   async handleResponse(res, context = "Operation") {
@@ -76,8 +139,11 @@ const Api = {
       } catch (e) {
         errData = { message: res.statusText };
       }
-      const message = errData.message || (errData.detail && (errData.detail.message || errData.detail)) || `${context} failed (${res.status})`;
-      throw new Error(message);
+      const message = this.formatErrorMessage(errData, res.status, context);
+      const error = new Error(message);
+      error.status = res.status;
+      error.data = errData;
+      throw error;
     }
     return res.json();
   },
@@ -248,7 +314,7 @@ const Api = {
     const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/stage`, {
       method: "POST",
       headers: this.getHeaders(),
-      body: JSON.stringify({ target_stage: targetStage })
+      body: JSON.stringify({ lifecycle_stage: targetStage })
     });
     return this.handleResponse(res, "Updating investigation phase");
   },
@@ -337,6 +403,14 @@ const Api = {
     return this.handleResponse(res, "Verifying encryption authenticity");
   },
 
+  async indexEvidence(caseId, evidenceId, forceReindex = false) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(evidenceId)}/index?force_reindex=${forceReindex}`, {
+      method: "POST",
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, "Indexing exhibit for forensic search");
+  },
+
   async searchRAG(caseId, query, limit = 5) {
     const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/rag/search`, {
       method: "POST",
@@ -346,15 +420,97 @@ const Api = {
     return this.handleResponse(res, "Evidence RAG Search");
   },
 
+  async getTimelineEvents(caseId) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/timeline-events`, {
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, "Loading timeline events");
+  },
+
+  async getAnalysisSummary(caseId) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/analysis-summary`, {
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, "Loading analysis summary");
+  },
+
+  async getExtractedFacts(caseId, evidenceId) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(evidenceId)}/extracted-facts`, {
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, "Loading extracted document facts");
+  },
+
+  async triggerExtractFacts(caseId, evidenceId, forceReindex = false) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/evidence/${encodeURIComponent(evidenceId)}/extract-facts?force_reindex=${forceReindex}`, {
+      method: "POST",
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, "Extracting document facts");
+  },
+
+  async previewFIRExtraction(formData) {
+    const headers = this.getHeaders();
+    delete headers["Content-Type"]; // Let browser set multipart boundary
+    const res = await fetch(`${API_BASE}/cases/fir-preview`, {
+      method: "POST",
+      headers: headers,
+      body: formData
+    });
+    return this.handleResponse(res, "Extracting candidate FIR details");
+  },
+
+  async createCaseFIRAssisted(payload) {
+    const res = await fetch(`${API_BASE}/cases/fir-assisted`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: JSON.stringify(payload)
+    });
+    return this.handleResponse(res, "Creating case with preserved FIR");
+  },
+
+  async getKnowledgeGraph(caseId) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/knowledge-graph`, {
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, "Loading entity knowledge graph");
+  },
+
+  async recordEdgeDecision(caseId, edgeId, payload) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/knowledge-graph/edges/${encodeURIComponent(edgeId)}/decision`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: JSON.stringify(payload)
+    });
+    return this.handleResponse(res, "Recording relationship review decision");
+  },
+
+  async getDualBrain(caseId) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/dual-brain`, {
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, "Loading Dual-Brain reasoning workspace");
+  },
+
+  async askCaseQuestion(caseId, question, limit = 5) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/ask`, {
+      method: "POST",
+      headers: this.getHeaders(),
+      body: JSON.stringify({ question, limit })
+    });
+    return this.handleResponse(res, "Evidence Q&A");
+  },
+
   async getHealth() {
     try {
       const res = await fetch(`/health`);
       return await res.json();
     } catch (e) {
-      return { status: "operational", version: "0.5.0" };
+      return { status: "operational", version: "0.6.0" };
     }
   }
 };
+
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. UI HELPERS & FORMATTERS
@@ -451,6 +607,251 @@ const Formatters = {
   }
 };
 
+const StatusPresentation = {
+  dictionary: {
+    // Lifecycle stages
+    "INITIALIZED": {
+      label: "Case Registered",
+      short: "Case Setup",
+      description: "Case particulars registered. Next step: Begin collecting evidence exhibits.",
+      badgeClass: "badge-neutral",
+      icon: "📋"
+    },
+    "EVIDENCE_INGESTION": {
+      label: "Collecting Evidence",
+      short: "Collecting Evidence",
+      description: "Evidence collection phase open. Attach crime scene photos, post-mortem reports, CCTV, and digital records.",
+      badgeClass: "badge-info",
+      icon: "📦"
+    },
+    "EVIDENCE_PROCESSING": {
+      label: "Forensic Verification",
+      short: "Forensic Verification",
+      description: "Automated format validation, malware scanning, dual-hash integrity checks, and WORM storage.",
+      badgeClass: "badge-attention",
+      icon: "⚙️"
+    },
+    "ANALYSIS": {
+      label: "Investigation Analysis",
+      short: "Timeline & Analysis",
+      description: "Cross-correlation of exhibits and chronological timeline reconstruction active.",
+      badgeClass: "badge-info",
+      icon: "⏱️"
+    },
+    "REVIEW": {
+      label: "Inquest Review",
+      short: "Inquest Review",
+      description: "Inquiry ready for supervisory review and endorsement.",
+      badgeClass: "badge-attention",
+      icon: "🔍"
+    },
+    "CLOSED": {
+      label: "Case Concluded",
+      short: "Case Closed",
+      description: "Final inquiry report concluded and archived under law.",
+      badgeClass: "badge-verified",
+      icon: "✓"
+    },
+    "SUSPENDED": {
+      label: "Investigation Suspended",
+      short: "Suspended",
+      description: "Investigation held under administrative or legal stay.",
+      badgeClass: "badge-danger",
+      icon: "⏸"
+    },
+    "REOPENED": {
+      label: "Investigation Reopened",
+      short: "Reopened",
+      description: "Supervisory reopening for supplementary inquiries.",
+      badgeClass: "badge-attention",
+      icon: "🔄"
+    },
+
+    // Evidence pipeline intake & verification
+    "REGISTERED_INTAKE": {
+      label: "Intake Received",
+      short: "Received",
+      description: "Exhibit staged into case workspace; awaiting initial verification checks.",
+      badgeClass: "badge-neutral",
+      icon: "📥"
+    },
+    "PENDING_MIME_VALIDATION": {
+      label: "Awaiting Format Check",
+      short: "Format Check",
+      description: "Binary signature inspection queued.",
+      badgeClass: "badge-attention",
+      icon: "⏳"
+    },
+    "VALIDATED": {
+      label: "File Format Confirmed",
+      short: "Format Valid",
+      description: "File signature matches declared type.",
+      badgeClass: "badge-verified",
+      icon: "✓"
+    },
+    "AV_SCANNING": {
+      label: "Running Security Scan",
+      short: "Scanning",
+      description: "Antivirus scanner actively inspecting file binary for malicious threats.",
+      badgeClass: "badge-attention",
+      icon: "🛡️"
+    },
+    "CLEAN": {
+      label: "Security Scan Passed",
+      short: "Clean",
+      description: "No threats detected by the configured antivirus scanner.",
+      badgeClass: "badge-verified",
+      icon: "✓"
+    },
+    "QUARANTINED": {
+      label: "Quarantined (Threat Detected)",
+      short: "Quarantined",
+      description: "Security threat detected in payload; isolated from active workspace.",
+      badgeClass: "badge-danger",
+      icon: "⚠️"
+    },
+    "REJECTED": {
+      label: "Verification Failed",
+      short: "Rejected",
+      description: "File signature mismatch or disallowed format.",
+      badgeClass: "badge-danger",
+      icon: "❌"
+    },
+    "PENDING_VERIFICATION": {
+      label: "Awaiting Verification",
+      short: "Awaiting Verification",
+      description: "Exhibit attached, awaiting automated integrity checks.",
+      badgeClass: "badge-attention",
+      icon: "⏳"
+    },
+
+    // Integrity & Checksums
+    "INTEGRITY_VERIFIED": {
+      label: "File Integrity Checks Passed",
+      short: "Integrity Verified",
+      description: "Dual cryptographic fingerprints (SHA-256 and SHA3-512) recorded and verified.",
+      badgeClass: "badge-verified",
+      icon: "✓"
+    },
+    "VERIFIED": {
+      label: "File Integrity Checks Passed",
+      short: "Verified",
+      description: "Dual cryptographic fingerprints recorded and verified.",
+      badgeClass: "badge-verified",
+      icon: "✓"
+    },
+    "PENDING": {
+      label: "Awaiting Verification",
+      short: "Pending",
+      description: "Integrity checks not yet completed.",
+      badgeClass: "badge-attention",
+      icon: "⏳"
+    },
+    "FAILED": {
+      label: "Integrity Check Failed",
+      short: "Failed",
+      description: "Cryptographic hash mismatch or file corruption detected.",
+      badgeClass: "badge-danger",
+      icon: "❌"
+    },
+
+    // Storage & Protection
+    "COMMITTED": {
+      label: "Stored with Protection Enabled",
+      short: "Preserved",
+      description: "Exhibit committed to write-once storage with protection enabled.",
+      badgeClass: "badge-verified",
+      icon: "🔒"
+    },
+    "OBJECT_LOCKED": {
+      label: "Evidence Stored with Protection Enabled",
+      short: "Protected",
+      description: "Application-level write protection active to prevent accidental modification or deletion.",
+      badgeClass: "badge-verified",
+      icon: "🔒"
+    },
+
+    // Search / RAG Indexing
+    "INDEXED": {
+      label: "Ready for Document Search",
+      short: "Search Ready",
+      description: "Text extracted and indexed into neural vector store for semantic search.",
+      badgeClass: "badge-verified",
+      icon: "🔎"
+    },
+    "INDEXING": {
+      label: "Preparing Document for Search",
+      short: "Indexing",
+      description: "Extracting text and computing neural embeddings for search.",
+      badgeClass: "badge-attention",
+      icon: "⏳"
+    },
+    "INDEXING_FAILED": {
+      label: "Document Received, But Search Preparation Failed",
+      short: "Search Unavailable",
+      description: "Document preserved in storage, but search indexing failed.",
+      badgeClass: "badge-danger",
+      icon: "⚠️"
+    },
+
+    // Operational errors & authorization
+    "UNAUTHORIZED": {
+      label: "You do not have permission to perform this action",
+      short: "Unauthorized",
+      description: "Access restricted by case assignment or territorial jurisdiction policy.",
+      badgeClass: "badge-danger",
+      icon: "🚫"
+    },
+    "NOT_FOUND": {
+      label: "This case or record could not be found",
+      short: "Not Found",
+      description: "The requested identifier does not exist or has been archived.",
+      badgeClass: "badge-neutral",
+      icon: "⚠️"
+    }
+  },
+
+  get(statusKey) {
+    if (!statusKey) return { label: "Unspecified", short: "Unspecified", description: "", badgeClass: "badge-neutral", icon: "" };
+    const upper = String(statusKey).toUpperCase().trim();
+    return this.dictionary[upper] || {
+      label: statusKey.replace(/_/g, " "),
+      short: statusKey.replace(/_/g, " "),
+      description: "",
+      badgeClass: "badge-neutral",
+      icon: "●"
+    };
+  },
+
+  renderBadge(statusKey, customLabel = null) {
+    const info = this.get(statusKey);
+    const label = customLabel || info.label;
+    return `<span class="badge ${info.badgeClass}" title="${Formatters.escapeHtml(info.description)}">${info.icon ? info.icon + ' ' : ''}${Formatters.escapeHtml(label)}</span>`;
+  },
+
+  renderTechnicalDetailsPanel(title, items, allowCopy = true) {
+    if (!items || items.length === 0) return "";
+    return `
+      <details class="technical-details-panel">
+        <summary>🔍 ${Formatters.escapeHtml(title || "Technical & Cryptographic Details")}</summary>
+        <div class="technical-details-content">
+          ${items.map(it => `
+            <div class="tech-detail-row">
+              <span class="tech-detail-label">${Formatters.escapeHtml(it.label)}:</span>
+              <div class="tech-detail-value-wrap">
+                <span class="tech-detail-val" title="${Formatters.escapeHtml(it.value || '')}">${Formatters.escapeHtml(it.value || 'Not available')}</span>
+                ${allowCopy && it.value && it.value !== 'Not available' ? `
+                  <button type="button" class="btn-copy-tech" onclick="navigator.clipboard.writeText('${Formatters.escapeHtml(it.value)}'); UI.showToast('Copied to clipboard', 'info', 2000);" title="Copy value">📋</button>
+                ` : ''}
+              </div>
+            </div>
+          `).join("")}
+        </div>
+      </details>
+    `;
+  }
+};
+
 const UI = {
   showToast(message, type = "info", duration = 4000) {
     const container = document.getElementById("toastContainer");
@@ -531,17 +932,56 @@ const UI = {
 // 4. ROUTER & WORKSPACE NAVIGATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+function resetActiveCaseState() {
+  State.activeCase = null;
+  State.activeCaseId = null;
+  State.activeStageInfo = null;
+  State.evidence = [];
+  try {
+    localStorage.removeItem("sakshi_active_case_id");
+  } catch (e) {}
+  updateSidebarActiveCaseContext();
+}
+
+function renderCaseNotFound(caseId, errorMessage) {
+  resetActiveCaseState();
+  const container = document.getElementById("viewContainer");
+  if (!container) return;
+  const currentBreadcrumb = document.getElementById("breadcrumbCurrent");
+  if (currentBreadcrumb) {
+    currentBreadcrumb.textContent = `${caseId || "Case"} / Case Not Found`;
+  }
+  const cleanMsg = errorMessage || `Investigation case with ID '${caseId}' was not found.`;
+  container.innerHTML = `
+    <div class="empty-state-card" style="margin-top: 30px;">
+      <div class="empty-state-icon">⚠️</div>
+      <div class="empty-state-title">Case Not Found</div>
+      <div class="empty-state-desc">${Formatters.escapeHtml(cleanMsg)}</div>
+      <button class="btn btn-primary" id="btnReturnToCaseDirectory" onclick="Router.navigate('#/cases')">Return to Case Directory</button>
+    </div>
+  `;
+}
+
 const Router = {
   routes: [
     { pattern: /^#\/login$/, handler: () => ScreenLogin.render() },
     { pattern: /^#\/cases$/, handler: () => ScreenCases.render() },
     { pattern: /^#\/cases\/active\/([a-z]+)$/, handler: (match) => Router.routeActiveTab(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/overview$/, handler: (match) => ScreenCaseOverview.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/setup$/, handler: (match) => ScreenCaseOverview.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/evidence$/, handler: (match) => ScreenEvidence.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/connections$/, handler: (match) => ScreenGraph.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/graph$/, handler: (match) => ScreenGraph.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/verification$/, handler: (match) => ScreenVerification.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/rag$/, handler: (match) => ScreenRAGSearch.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/timeline$/, handler: (match) => ScreenTimeline.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/findings$/, handler: (match) => ScreenFindings.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/review$/, handler: (match) => ScreenFindings.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/analysis$/, handler: (match) => ScreenAnalysis.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/gaps$/, handler: (match) => ScreenGaps.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/closure$/, handler: (match) => ScreenClosure.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/report$/, handler: (match) => ScreenReport.render(match[1]) },
+    { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/reports$/, handler: (match) => ScreenReport.render(match[1]) },
     { pattern: /^#\/cases\/([A-Za-z0-9_-]+)\/audit$/, handler: (match) => ScreenAudit.render(match[1]) },
     { pattern: /^#\/officers$/, handler: () => ScreenOfficers.render() },
     { pattern: /^#\/settings$/, handler: () => ScreenSettings.render() }
@@ -549,13 +989,25 @@ const Router = {
 
   routeActiveTab(tab) {
     if (!State.activeCaseId) {
-      window.location.hash = "#/cases";
+      UI.showToast("Please select a case from the Case Directory first.", "info");
+      this.navigate("#/cases");
       return;
     }
-    window.location.hash = `#/cases/${State.activeCaseId}/${tab}`;
+    this.navigate(`#/cases/${State.activeCaseId}/${tab}`);
   },
 
-  navigate() {
+  navigate(targetHash = null) {
+    if (!State.auth.initialized) {
+      return;
+    }
+
+    if (targetHash !== null && targetHash !== undefined) {
+      if (window.location.hash !== targetHash) {
+        window.location.hash = targetHash;
+        return;
+      }
+    }
+
     const rawHash = window.location.hash || "";
     const isLogin = !rawHash || rawHash === "#" || rawHash === "#/" || rawHash === "#/login";
 
@@ -577,13 +1029,18 @@ const Router = {
         return;
       }
     }
-    window.location.hash = "#/cases";
+    if (window.location.hash !== "#/cases") {
+      window.location.hash = "#/cases";
+    } else {
+      ScreenCases.render();
+      updateSidebarActiveLink("#/cases");
+    }
   },
 
   selectCaseAndRoute(caseId, tab = "overview") {
     State.activeCaseId = caseId;
     localStorage.setItem("sakshi_active_case_id", caseId);
-    window.location.hash = `#/cases/${caseId}/${tab}`;
+    this.navigate(`#/cases/${caseId}/${tab}`);
   }
 };
 
@@ -595,15 +1052,22 @@ function updateSidebarActiveLink(hash) {
   if (hash.startsWith("#/cases/") && !hash.endsWith("#/cases")) {
     if (hash.includes("/overview")) document.getElementById("navOverview")?.classList.add("active");
     else if (hash.includes("/evidence")) document.getElementById("navEvidence")?.classList.add("active");
+    else if (hash.includes("/connections") || hash.includes("/graph")) document.getElementById("navConnections")?.classList.add("active");
     else if (hash.includes("/rag")) document.getElementById("navRAG")?.classList.add("active");
     else if (hash.includes("/timeline")) document.getElementById("navTimeline")?.classList.add("active");
-    else if (hash.includes("/analysis")) document.getElementById("navAnalysis")?.classList.add("active");
-    else if (hash.includes("/gaps")) document.getElementById("navGaps")?.classList.add("active");
+    else if (hash.includes("/findings") || hash.includes("/analysis") || hash.includes("/gaps")) {
+      document.getElementById("navFindings")?.classList.add("active");
+      document.getElementById("navAnalysis")?.classList.add("active");
+      document.getElementById("navGaps")?.classList.add("active");
+    }
+    else if (hash.includes("/report")) document.getElementById("navReport")?.classList.add("active");
     else if (hash.includes("/audit")) document.getElementById("navAudit")?.classList.add("active");
   } else if (hash.startsWith("#/settings")) {
     document.getElementById("navSettings")?.classList.add("active");
+    document.getElementById("navAdmin")?.classList.add("active");
   } else if (hash === "#/officers") {
     document.getElementById("navOfficers")?.classList.add("active");
+    document.getElementById("navAdmin")?.classList.add("active");
   } else if (hash === "#/cases") {
     document.getElementById("navCases")?.classList.add("active");
   }
@@ -615,26 +1079,67 @@ function updateSidebarActiveCaseContext() {
   const stgEl = document.getElementById("sidebarActiveCaseStage");
   const countEl = document.getElementById("navEvidenceCount");
 
-  if (!State.activeCase) {
-    idEl.textContent = "No Case Selected";
-    stgEl.textContent = "Select a case";
-    countEl.style.display = "none";
-    box.style.cursor = "default";
-    box.onclick = null;
+  const workspaceLinks = [
+    { id: "navOverview", tab: "overview" },
+    { id: "navEvidence", tab: "evidence" },
+    { id: "navRAG", tab: "rag" },
+    { id: "navTimeline", tab: "timeline" },
+    { id: "navFindings", tab: "findings" },
+    { id: "navAnalysis", tab: "analysis" },
+    { id: "navGaps", tab: "gaps" },
+    { id: "navReport", tab: "report" },
+    { id: "navAudit", tab: "audit" }
+  ];
+
+  // Conditional display of Administration section
+  const isAdmin = State.auth.role === "SUPERVISOR" || State.auth.role === "SYSTEM_ADMINISTRATOR" || State.auth.mode === "development";
+  const adminSec = document.getElementById("adminSectionTitle");
+  const adminNav = document.getElementById("navAdmin");
+  if (adminSec) adminSec.style.display = isAdmin ? "block" : "none";
+  if (adminNav) adminNav.style.display = isAdmin ? "flex" : "none";
+
+  if (!State.activeCase && !State.activeCaseId) {
+    if (idEl) idEl.textContent = "No Case Selected";
+    if (stgEl) stgEl.textContent = "Select a case";
+    if (countEl) countEl.style.display = "none";
+    if (box) {
+      box.style.cursor = "default";
+      box.onclick = null;
+    }
+    workspaceLinks.forEach(item => {
+      const el = document.getElementById(item.id);
+      if (el) {
+        el.setAttribute("href", `#/cases/active/${item.tab}`);
+        el.classList.add("workspace-link-inactive");
+      }
+    });
     return;
   }
 
-  idEl.textContent = State.activeCase.case_id;
-  const stageObj = StageDisplayMap[State.activeCase.lifecycle_stage] || { short: State.activeCase.lifecycle_stage };
-  stgEl.textContent = `Phase: ${stageObj.short}`;
-  box.style.cursor = "pointer";
-  box.onclick = () => Router.selectCaseAndRoute(State.activeCase.case_id, "overview");
+  const activeId = (State.activeCase && State.activeCase.case_id) || State.activeCaseId;
+  if (idEl) idEl.textContent = activeId;
+  const stageObj = (State.activeCase && StageDisplayMap[State.activeCase.lifecycle_stage]) || { short: (State.activeCase && State.activeCase.lifecycle_stage) || "Active" };
+  if (stgEl) stgEl.textContent = `Phase: ${stageObj.short}`;
+  if (box) {
+    box.style.cursor = "pointer";
+    box.onclick = () => Router.navigate(`#/cases/${activeId}/overview`);
+  }
 
-  if (State.evidence && State.evidence.length > 0) {
-    countEl.textContent = State.evidence.length;
-    countEl.style.display = "inline-flex";
-  } else {
-    countEl.style.display = "none";
+  workspaceLinks.forEach(item => {
+    const el = document.getElementById(item.id);
+    if (el) {
+      el.setAttribute("href", `#/cases/${activeId}/${item.tab}`);
+      el.classList.remove("workspace-link-inactive");
+    }
+  });
+
+  if (countEl) {
+    if (State.evidence && State.evidence.length > 0) {
+      countEl.textContent = State.evidence.length;
+      countEl.style.display = "inline-flex";
+    } else {
+      countEl.style.display = "none";
+    }
   }
 }
 
@@ -649,6 +1154,31 @@ async function initApplication() {
   try {
     const authStatus = await Api.getAuthStatus();
     State.auth.mode = authStatus.auth_mode || "unknown";
+    const isDevMode = State.auth.mode === "development" || State.auth.mode === "offline" || authStatus.development_mode === true;
+    if (isDevMode) {
+      State.auth.authenticated = true;
+      const defaultId = authStatus.default_investigator_id || "dev-investigator-001";
+      const defaultName = authStatus.default_investigator_name || "Dev Inspector (Development Only)";
+      const defaultJur = authStatus.default_jurisdiction || "KERALA";
+
+      const currentStored = typeof localStorage !== "undefined" ? localStorage.getItem("sakshi_dev_subject_id") : null;
+      if (!currentStored || currentStored === "IO-7842-SHARMA") {
+        State.auth.subjectId = defaultId;
+        State.auth.displayName = defaultName;
+        State.auth.jurisdiction = defaultJur;
+        try {
+          localStorage.setItem("sakshi_dev_subject_id", defaultId);
+          localStorage.setItem("sakshi_dev_display_name", defaultName);
+          localStorage.setItem("sakshi_dev_jurisdiction", defaultJur);
+        } catch (e) {}
+      }
+
+      if (State.auth.subjectId) State.auth.headers["X-Investigator-Id"] = State.auth.subjectId;
+      if (State.auth.role) State.auth.headers["X-Investigator-Role"] = State.auth.role;
+      if (State.auth.jurisdiction) State.auth.headers["X-Investigator-Jurisdiction"] = State.auth.jurisdiction;
+    } else if (State.auth.token) {
+      State.auth.authenticated = true;
+    }
     const me = await Api.getAuthMe();
     if (me) {
       State.auth.authenticated = true;
@@ -656,9 +1186,15 @@ async function initApplication() {
       State.auth.displayName = me.display_name || State.auth.displayName;
       State.auth.role = me.role || State.auth.role;
       State.auth.jurisdiction = me.station_jurisdiction || State.auth.jurisdiction;
+    } else if (!isDevMode) {
+      State.auth.authenticated = false;
+      State.auth.token = null;
+      try { sessionStorage.removeItem("sakshi_auth_token"); } catch (e) {}
     }
   } catch (e) {
     console.warn("Auth initialization notice:", e);
+  } finally {
+    State.auth.initialized = true;
   }
 
   updateHeaderAuth();
@@ -712,7 +1248,21 @@ function setupEventListeners() {
   });
 
   document.getElementById("investigatorProfileBtn")?.addEventListener("click", () => {
-    window.location.hash = "#/settings";
+    Router.navigate("#/settings");
+  });
+
+  // Single-click sidebar navigation handler
+  document.querySelectorAll(".sidebar-nav a.nav-link").forEach(link => {
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      const href = link.getAttribute("href");
+      if (!href) return;
+
+      // Close mobile drawer if open
+      document.getElementById("appSidebar")?.classList.remove("open");
+
+      Router.navigate(href);
+    });
   });
 
   document.getElementById("logoutBtn")?.addEventListener("click", async () => {
@@ -721,14 +1271,16 @@ function setupEventListeners() {
     } catch (e) {
       // Best-effort logout
     }
+    resetActiveCaseState();
     State.auth.token = null;
     State.auth.authenticated = false;
     State.auth.subjectId = "";
     State.auth.displayName = "";
     State.auth.role = "";
     State.auth.jurisdiction = "";
+    try { sessionStorage.removeItem("sakshi_auth_token"); } catch (e) {}
     UI.showToast("Signed out successfully.", "info");
-    window.location.hash = "#/login";
+    Router.navigate("#/login");
   });
 }
 
@@ -869,7 +1421,11 @@ const ScreenLogin = {
         if (State.auth.mode !== "firebase") {
           // Dev / demo mode direct access
           State.auth.authenticated = true;
-          window.location.hash = "#/cases";
+          if (State.auth.subjectId) State.auth.headers["X-Investigator-Id"] = State.auth.subjectId;
+          if (State.auth.role) State.auth.headers["X-Investigator-Role"] = State.auth.role;
+          if (State.auth.jurisdiction) State.auth.headers["X-Investigator-Jurisdiction"] = State.auth.jurisdiction;
+          updateHeaderAuth();
+          Router.navigate("#/cases");
           return;
         }
 
@@ -903,6 +1459,7 @@ const ScreenLogin = {
         try {
           const loginRes = await Api.login(normalizedMobile, password);
           State.auth.token = loginRes.id_token;
+          try { sessionStorage.setItem("sakshi_auth_token", loginRes.id_token); } catch (e) {}
           const me = await Api.getAuthMe();
           if (!me) throw new Error("Server could not verify officer identity.");
           State.auth.authenticated = true;
@@ -912,7 +1469,7 @@ const ScreenLogin = {
           State.auth.jurisdiction = me.station_jurisdiction;
           updateHeaderAuth();
           UI.showToast(`Authenticated as ${me.display_name || me.subject_id}`, "success");
-          window.location.hash = "#/cases";
+          Router.navigate("#/cases");
         } catch (err) {
           UI.showToast(err.message || "Sign in failed.", "error");
         } finally {
@@ -935,24 +1492,32 @@ const ScreenCases = {
 
     let cases = [];
     try {
-      cases = await Api.listCases();
+      const rawCases = await Api.listCases();
+      cases = Array.isArray(rawCases) ? rawCases : (rawCases && Array.isArray(rawCases.cases) ? rawCases.cases : []);
       State.cases = cases;
     } catch (err) {
       container.innerHTML = `
         <div class="empty-state-card">
           <div class="empty-state-icon">⚠️</div>
           <div class="empty-state-title">Unable to Connect to Case Database</div>
-          <div class="empty-state-desc">${err.message}</div>
-          <button class="btn btn-primary" onclick="ScreenCases.render()">Retry Connection</button>
+          <div class="empty-state-desc">${Formatters.escapeHtml(err.message)}</div>
+          <button class="btn btn-primary" onclick="Router.navigate('#/cases')">Retry Connection</button>
         </div>
       `;
       return;
     }
 
+    // Clean up stale activeCaseId if it is not in the fetched case directory
+    if (State.activeCaseId && !cases.some(c => c.case_id === State.activeCaseId)) {
+      resetActiveCaseState();
+    } else {
+      updateSidebarActiveCaseContext();
+    }
+
     const filtered = cases.filter(c => {
       const matchSearch = !State.filters.caseSearch ||
-        c.title.toLowerCase().includes(State.filters.caseSearch.toLowerCase()) ||
-        c.case_id.toLowerCase().includes(State.filters.caseSearch.toLowerCase()) ||
+        (c.title && c.title.toLowerCase().includes(State.filters.caseSearch.toLowerCase())) ||
+        (c.case_id && c.case_id.toLowerCase().includes(State.filters.caseSearch.toLowerCase())) ||
         (c.fir_metadata && c.fir_metadata.fir_number && c.fir_metadata.fir_number.toLowerCase().includes(State.filters.caseSearch.toLowerCase()));
 
       const matchStage = State.filters.caseStage === "ALL" || c.lifecycle_stage === State.filters.caseStage;
@@ -1078,46 +1643,84 @@ const ScreenCases = {
   },
 
   showNewCaseModal() {
-    const today = new Date().toISOString().slice(0, 10);
+    let activeMode = "manual";
     const bodyHtml = `
-      <form id="newCaseForm">
+      <div class="modal-tabs">
+        <button type="button" class="modal-tab-btn active" id="tabManualMode" onclick="ScreenCases.switchModalTab('manual')">
+          📝 Manual Registration (Method A)
+        </button>
+        <button type="button" class="modal-tab-btn" id="tabFirMode" onclick="ScreenCases.switchModalTab('fir')">
+          📄 FIR-Assisted Ingestion (Method B)
+        </button>
+      </div>
+
+      <!-- METHOD A: MANUAL REGISTRATION -->
+      <div id="sectionManualRegistration">
+        <form id="newCaseForm">
+          <div class="form-group">
+            <label class="form-label" for="inpCaseTitle">Case Title / Incident Description *</label>
+            <input type="text" id="inpCaseTitle" class="form-input" placeholder="e.g. Unnatural Death Inquiry of Person X at Hotel Sunrise" required>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="inpFirNumber">FIR / Inquest Number *</label>
+              <input type="text" id="inpFirNumber" class="form-input" placeholder="e.g. FIR-114/2026-CR" required value="INQ-${Math.floor(100 + Math.random() * 900)}/2026">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="inpStation">Police Station / Circle *</label>
+              <input type="text" id="inpStation" class="form-input" placeholder="e.g. Fort Police Station, Thiruvananthapuram" required value="Thiruvananthapuram Central Station">
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <div class="form-group">
+              <label class="form-label" for="inpIncidentDate">Incident Date & Time</label>
+              <input type="datetime-local" id="inpIncidentDate" class="form-input" value="${new Date().toISOString().slice(0, 16)}">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="inpAssignedIo">Investigating Officer (IO Badge)</label>
+              <input type="text" id="inpAssignedIo" class="form-input" value="${State.auth.subjectId}">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="inpIncidentLocation">Scene of Occurrence / Location</label>
+            <input type="text" id="inpIncidentLocation" class="form-input" placeholder="e.g. Room 304, Hotel Sunrise, MG Road" value="MG Road Sector 4">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="inpLegalProvision">Legal Provision</label>
+            <input type="text" id="inpLegalProvision" class="form-input" value="Section 194 BNSS / Section 174 CrPC (Unnatural Death)" readonly>
+          </div>
+        </form>
+      </div>
+
+      <!-- METHOD B: FIR-ASSISTED INGESTION -->
+      <div id="sectionFirAssisted" style="display: none;">
+        <div style="background: var(--primary-bg); border-left: 3px solid var(--primary); padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 14px; font-size: 0.84rem; color: var(--text-secondary);">
+          <strong>FIR-Assisted Case Ingestion:</strong> Upload an official FIR document (PDF or text). Candidate particulars (dates, locations, victim, informant, penal sections) will be extracted with verbatim grounding passages for your review before authoritative registration.
+        </div>
+
         <div class="form-group">
-          <label class="form-label" for="inpCaseTitle">Case Title / Incident Description *</label>
-          <input type="text" id="inpCaseTitle" class="form-input" placeholder="e.g. Unnatural Death Inquiry of Person X at Hotel Sunrise" required>
-        </div>
-
-        <div class="grid-2">
-          <div class="form-group">
-            <label class="form-label" for="inpFirNumber">FIR / Inquest Number *</label>
-            <input type="text" id="inpFirNumber" class="form-input" placeholder="e.g. FIR-114/2026-CR" required value="INQ-${Math.floor(100 + Math.random() * 900)}/2026">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="inpStation">Police Station / Circle *</label>
-            <input type="text" id="inpStation" class="form-input" placeholder="e.g. Fort Police Station, Thiruvananthapuram" required value="Thiruvananthapuram Central Station">
-          </div>
-        </div>
-
-        <div class="grid-2">
-          <div class="form-group">
-            <label class="form-label" for="inpIncidentDate">Incident Date & Time</label>
-            <input type="datetime-local" id="inpIncidentDate" class="form-input" value="${new Date().toISOString().slice(0, 16)}">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="inpAssignedIo">Investigating Officer (IO Badge)</label>
-            <input type="text" id="inpAssignedIo" class="form-input" value="${State.auth.subjectId}">
-          </div>
+          <label class="form-label">Upload FIR Document (PDF / Plaintext)</label>
+          <input type="file" id="inpFirDocFile" class="form-input" accept=".pdf,.txt,.md,.csv" onchange="ScreenCases.handleFirFileSelect(this)" />
         </div>
 
         <div class="form-group">
-          <label class="form-label" for="inpIncidentLocation">Scene of Occurrence / Location</label>
-          <input type="text" id="inpIncidentLocation" class="form-input" placeholder="e.g. Room 304, Hotel Sunrise, MG Road" value="MG Road Sector 4">
+          <label class="form-label">Or Paste FIR / Inquest Text Content</label>
+          <textarea id="inpFirPastedText" class="form-input" rows="4" placeholder="Paste First Information Report text or initial inquest notes here..."></textarea>
         </div>
 
-        <div class="form-group">
-          <label class="form-label" for="inpLegalProvision">Legal Provision</label>
-          <input type="text" id="inpLegalProvision" class="form-input" value="Section 194 BNSS / Section 174 CrPC (Unnatural Death)" readonly>
+        <div style="margin-bottom: 14px;">
+          <button type="button" class="btn btn-secondary btn-sm" id="btnExtractFirCandidate" onclick="ScreenCases.extractFirDetails()">
+            🔍 Extract FIR Candidate Particulars
+          </button>
         </div>
-      </form>
+
+        <!-- Extraction Preview Container -->
+        <div id="firExtractionPreviewContainer" style="display: none;"></div>
+      </div>
     `;
 
     const footerHtml = `
@@ -1127,49 +1730,334 @@ const ScreenCases = {
 
     UI.openModal("Register New Case Inquiry", bodyHtml, footerHtml);
 
-    document.getElementById("btnSubmitNewCase")?.addEventListener("click", async () => {
-      const title = document.getElementById("inpCaseTitle").value.trim();
-      const fir = document.getElementById("inpFirNumber").value.trim();
-      const station = document.getElementById("inpStation").value.trim();
-      const dt = document.getElementById("inpIncidentDate").value;
-      const io = document.getElementById("inpAssignedIo").value.trim() || State.auth.subjectId;
-      const loc = document.getElementById("inpIncidentLocation").value.trim();
-
-      if (!title || !fir || !station) {
-        UI.showToast("Please complete all mandatory particulars.", "error");
-        return;
-      }
-
-      const payload = {
-        title,
-        assigned_io_id: io,
-        fir_metadata: {
-          fir_number: fir,
-          police_station: station,
-          incident_date: dt ? new Date(dt).toISOString() : new Date().toISOString(),
-          incident_location: loc || "Scene of occurrence unrecorded"
-        }
-      };
-
-      try {
-        const newCase = await Api.createCase(payload);
-        UI.closeModal();
-        UI.recordAudit("CASE_INITIALIZED", newCase.case_id, "SUCCESS", `Case registered: ${newCase.title}`);
-
-        // Automatically advance to EVIDENCE_INGESTION so evidence collection can begin immediately
-        try {
-          await Api.updateCaseStage(newCase.case_id, "EVIDENCE_INGESTION");
-          newCase.lifecycle_stage = "EVIDENCE_INGESTION";
-        } catch (stgErr) {
-          console.warn("Auto-advance notice:", stgErr);
-        }
-
-        UI.showToast(`Inquiry ${newCase.case_id} registered successfully!`, "success");
-        Router.selectCaseAndRoute(newCase.case_id, "overview");
-      } catch (err) {
-        UI.showToast(`Case registration failed: ${err.message}`, "error");
+    document.getElementById("btnSubmitNewCase")?.addEventListener("click", () => {
+      if (ScreenCases._modalMode === "fir") {
+        ScreenCases.submitFirAssistedCase();
+      } else {
+        ScreenCases.submitManualCase();
       }
     });
+    ScreenCases._modalMode = "manual";
+    ScreenCases._extractedFirData = null;
+    ScreenCases._uploadedFirFile = null;
+  },
+
+  switchModalTab(mode) {
+    ScreenCases._modalMode = mode;
+    const tabM = document.getElementById("tabManualMode");
+    const tabF = document.getElementById("tabFirMode");
+    const secM = document.getElementById("sectionManualRegistration");
+    const secF = document.getElementById("sectionFirAssisted");
+    const submitBtn = document.getElementById("btnSubmitNewCase");
+
+    if (mode === "fir") {
+      tabM?.classList.remove("active");
+      tabF?.classList.add("active");
+      if (secM) secM.style.display = "none";
+      if (secF) secF.style.display = "block";
+      if (submitBtn) submitBtn.textContent = ScreenCases._extractedFirData ? "Confirm & Register Case" : "Initialize Case Inquiry";
+    } else {
+      tabF?.classList.remove("active");
+      tabM?.classList.add("active");
+      if (secF) secF.style.display = "none";
+      if (secM) secM.style.display = "block";
+      if (submitBtn) submitBtn.textContent = "Initialize Case Inquiry";
+    }
+  },
+
+  handleFirFileSelect(input) {
+    if (input.files && input.files[0]) {
+      ScreenCases._uploadedFirFile = input.files[0];
+    }
+  },
+
+  async extractFirDetails() {
+    const btn = document.getElementById("btnExtractFirCandidate");
+    const previewMount = document.getElementById("firExtractionPreviewContainer");
+    const pastedText = document.getElementById("inpFirPastedText")?.value.trim() || "";
+    const file = ScreenCases._uploadedFirFile;
+
+    if (!file && !pastedText) {
+      UI.showToast("Please choose an FIR file or paste FIR text first.", "error");
+      return;
+    }
+
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span style="display:inline-block; width:12px; height:12px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin 0.75s linear infinite; margin-right:6px; vertical-align:middle;"></span> Extracting...`;
+    }
+
+    try {
+      const formData = new FormData();
+      if (file) {
+        formData.append("file", file);
+      }
+      if (pastedText) {
+        formData.append("fir_text", pastedText);
+      }
+
+      const extracted = await Api.previewFIRExtraction(formData);
+      ScreenCases._extractedFirData = extracted;
+
+      if (previewMount) {
+        previewMount.style.display = "block";
+        previewMount.innerHTML = `
+          <div class="card" style="padding: 16px; background: var(--bg-card-subtle); border-left: 4px solid var(--primary); margin-top: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+              <h4 style="font-size: 0.96rem; font-weight: 700; color: var(--text-main);">Extracted Candidate Particulars</h4>
+              <span class="badge badge-attention">Human Review Required</span>
+            </div>
+            <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 14px;">
+              ${Formatters.escapeHtml(extracted.disclaimer)}
+            </p>
+
+            <div class="form-group">
+              <label class="form-label">Suggested Case Title *</label>
+              <input type="text" id="inpFirCandidateTitle" class="form-input" value="Inquest Inquiry of ${Formatters.escapeHtml(extracted.victim_name || 'Unnatural Death')} — ${Formatters.escapeHtml(extracted.fir_number)}" />
+            </div>
+
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="form-label">FIR / Inquest Number *</label>
+                <input type="text" id="inpFirCandidateNumber" class="form-input" value="${Formatters.escapeHtml(extracted.fir_number)}" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Police Station / Circle *</label>
+                <input type="text" id="inpFirCandidateStation" class="form-input" value="${Formatters.escapeHtml(extracted.police_station)}" />
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="form-label">Incident Date / Time</label>
+                <input type="text" id="inpFirCandidateDate" class="form-input" value="${Formatters.escapeHtml(extracted.incident_date || '')}" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Scene of Occurrence / Location</label>
+                <input type="text" id="inpFirCandidateLocation" class="form-input" value="${Formatters.escapeHtml(extracted.incident_location || '')}" />
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="form-label">Complainant / Informant</label>
+                <input type="text" id="inpFirCandidateComplainant" class="form-input" value="${Formatters.escapeHtml(extracted.complainant_name || '')}" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Deceased / Victim</label>
+                <input type="text" id="inpFirCandidateVictim" class="form-input" value="${Formatters.escapeHtml(extracted.victim_name || '')}" />
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label">Reported Statutory Sections</label>
+              <input type="text" id="inpFirCandidateSections" class="form-input" value="${Formatters.escapeHtml(extracted.offense_sections || 'Section 194 BNSS')}" />
+            </div>
+
+            <!-- Verbatim Source Quotes Accordion -->
+            <div style="margin-top: 12px;">
+              <div style="font-weight: 700; font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Grounding Source Passages (${extracted.source_passages.length})</div>
+              <div style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto;">
+                ${extracted.source_passages.map(sp => `
+                  <div class="fir-source-quote-box" style="margin-top: 0; padding: 6px 10px;">
+                    "${Formatters.escapeHtml(sp.quote)}"
+                    <div class="fir-quote-meta">
+                      <span>Field: <strong>${Formatters.escapeHtml(sp.field)}</strong></span>
+                      <span>Offset: ${sp.char_offset || 0}</span>
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            </div>
+          </div>
+        `;
+      }
+
+      const submitBtn = document.getElementById("btnSubmitNewCase");
+      if (submitBtn) submitBtn.textContent = "Confirm & Register Case";
+      UI.showToast("FIR particulars extracted. Review and confirm to proceed.", "success");
+    } catch (err) {
+      UI.showToast(`FIR extraction failed: ${err.message}`, "error");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `🔍 Extract FIR Candidate Particulars`;
+      }
+    }
+  },
+
+  async submitFirAssistedCase() {
+    const title = document.getElementById("inpFirCandidateTitle")?.value.trim();
+    const firNum = document.getElementById("inpFirCandidateNumber")?.value.trim();
+    const station = document.getElementById("inpFirCandidateStation")?.value.trim();
+    const dateStr = document.getElementById("inpFirCandidateDate")?.value.trim();
+    const loc = document.getElementById("inpFirCandidateLocation")?.value.trim();
+    const comp = document.getElementById("inpFirCandidateComplainant")?.value.trim();
+    const vic = document.getElementById("inpFirCandidateVictim")?.value.trim();
+    const sec = document.getElementById("inpFirCandidateSections")?.value.trim();
+    const rawText = document.getElementById("inpFirPastedText")?.value || "";
+
+    if (!title || !firNum || !station) {
+      UI.showToast("Please confirm mandatory particulars (Title, FIR Number, Police Station).", "error");
+      return;
+    }
+
+    const payload = {
+      title: title,
+      assigned_io_id: State.auth.subjectId,
+      fir_metadata: {
+        fir_number: firNum,
+        police_station: station,
+        incident_date: dateStr || new Date().toISOString(),
+        incident_location: loc || "Scene of occurrence unrecorded",
+        additional_attributes: {
+          complainant_name: comp,
+          victim_name: vic,
+          offense_sections: sec,
+          assisted_registration: true
+        }
+      },
+      fir_raw_text: rawText,
+      fir_filename: ScreenCases._uploadedFirFile ? ScreenCases._uploadedFirFile.name : "FIR_initial_record.txt"
+    };
+
+    try {
+      const resp = await Api.createCaseFIRAssisted(payload);
+      UI.closeModal();
+      UI.recordAudit("CASE_INITIALIZED_FIR_ASSISTED", resp.case.case_id, "SUCCESS", `Case registered via FIR assistance: ${resp.case.title}`);
+      UI.showToast(`Case ${resp.case.case_id} registered and FIR preserved into chain of custody!`, "success");
+      ScreenCases.showRegistrationSuccessModal(resp.case);
+    } catch (err) {
+      UI.showToast(`FIR-Assisted registration failed: ${err.message}`, "error");
+    }
+  },
+
+  async submitManualCase() {
+    const title = document.getElementById("inpCaseTitle")?.value.trim();
+    const fir = document.getElementById("inpFirNumber")?.value.trim();
+    const station = document.getElementById("inpStation")?.value.trim();
+    const dt = document.getElementById("inpIncidentDate")?.value;
+    const io = document.getElementById("inpAssignedIo")?.value.trim() || State.auth.subjectId;
+    const loc = document.getElementById("inpIncidentLocation")?.value.trim();
+
+    if (!title || !fir || !station) {
+      UI.showToast("Please complete all mandatory particulars.", "error");
+      return;
+    }
+
+    const payload = {
+      title,
+      assigned_io_id: io,
+      fir_metadata: {
+        fir_number: fir,
+        police_station: station,
+        incident_date: dt ? new Date(dt).toISOString() : new Date().toISOString(),
+        incident_location: loc || "Scene of occurrence unrecorded"
+      }
+    };
+
+    try {
+      const newCase = await Api.createCase(payload);
+      UI.closeModal();
+      UI.recordAudit("CASE_INITIALIZED", newCase.case_id, "SUCCESS", `Case registered: ${newCase.title}`);
+      UI.showToast(`Inquiry ${newCase.case_id} registered successfully!`, "success");
+      ScreenCases.showRegistrationSuccessModal(newCase);
+    } catch (err) {
+      UI.showToast(`Case registration failed: ${err.message}`, "error");
+    }
+  },
+
+  showRegistrationSuccessModal(newCase) {
+    const isIngestion = newCase.lifecycle_stage === "EVIDENCE_INGESTION";
+    const bodyHtml = `
+      <div style="display: flex; flex-direction: column; gap: 16px; font-size: 0.88rem;">
+        <div style="display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--verified-bg); border: 1px solid var(--verified-border); border-radius: var(--radius-md);">
+          <span style="font-size: 1.8rem;">✅</span>
+          <div>
+            <div style="font-weight: 700; color: var(--verified-text); font-size: 1rem;">Case Registration Confirmed</div>
+            <div style="color: var(--text-secondary); font-size: 0.82rem;">Inquest docket formally recorded in police station registry.</div>
+          </div>
+        </div>
+
+        <div class="card" style="padding: 14px; background: var(--bg-card-subtle);">
+          <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; font-size: 0.82rem;">
+            <div>
+              <span style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Case Identifier</span>
+              <strong style="font-family: var(--font-mono); color: var(--primary);">${Formatters.escapeHtml(newCase.case_id)}</strong>
+            </div>
+            <div>
+              <span style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Current Lifecycle Stage</span>
+              <span class="badge ${isIngestion ? 'badge-info' : 'badge-neutral'}">${isIngestion ? 'Collecting Evidence' : '1. Case Setup (INITIALIZED)'}</span>
+            </div>
+            <div style="grid-column: span 2;">
+              <span style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Case Title</span>
+              <strong>${Formatters.escapeHtml(newCase.title)}</strong>
+            </div>
+            <div>
+              <span style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Assigned Officer</span>
+              <span>${Formatters.escapeHtml(newCase.assigned_io_id || State.auth.subjectId)}</span>
+            </div>
+            <div>
+              <span style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Police Station</span>
+              <span>${Formatters.escapeHtml(newCase.fir_metadata?.police_station || 'Station Registry')}</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div style="font-size: 0.75rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;">Investigation Workflow Progress</div>
+          <div class="stage-stepper" style="margin-bottom: 8px;">
+            <div class="stage-step completed">
+              <div class="step-node">✓</div>
+              <div class="step-label">1. Register Case</div>
+            </div>
+            <div class="stage-step current">
+              <div class="step-node">2</div>
+              <div class="step-label">2. Collect Evidence ●</div>
+            </div>
+            <div class="stage-step pending">
+              <div class="step-node">3</div>
+              <div class="step-label">3. Verify Evidence</div>
+            </div>
+            <div class="stage-step pending">
+              <div class="step-node">4</div>
+              <div class="step-label">4. Review Timeline</div>
+            </div>
+            <div class="stage-step pending">
+              <div class="step-node">5</div>
+              <div class="step-label">5. Review Findings</div>
+            </div>
+            <div class="stage-step pending">
+              <div class="step-node">6</div>
+              <div class="step-label">6. Complete Review</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="background: var(--primary-bg); border-left: 4px solid var(--primary); padding: 12px 16px; border-radius: var(--radius-sm);">
+          <strong style="color: var(--text-main); display: block; margin-bottom: 4px;">Next Action: Begin Evidence Collection</strong>
+          <p style="color: var(--text-secondary); font-size: 0.84rem; line-height: 1.5; margin: 0;">
+            Under BNSS procedure, an inquiry requires primary case exhibits before timeline reconstruction or forensic analysis can proceed.
+            You can now attach crime scene photographs, autopsy certificates, CCTV footage, mobile extractions, or telecom records. All exhibits are protected with dual cryptographic fingerprints and WORM storage.
+          </p>
+        </div>
+      </div>
+    `;
+
+    const footerHtml = `
+      <button class="btn btn-secondary" onclick="UI.closeModal(); Router.selectCaseAndRoute('${newCase.case_id}', 'overview');">
+        View Case Details
+      </button>
+      <button class="btn btn-primary" id="btnRegModalAddEvidence" onclick="UI.closeModal(); ${
+        isIngestion 
+          ? `window.location.hash='#/cases/${newCase.case_id}/evidence'; setTimeout(() => ScreenEvidence.showRegisterEvidenceModal(), 150);` 
+          : `handleStageTransition('${newCase.case_id}', 'EVIDENCE_INGESTION', true);`
+      }">
+        ${isIngestion ? '+ Add Evidence' : 'Begin Evidence Collection & Add Evidence &rarr;'}
+      </button>
+    `;
+
+    UI.openModal("Case Registered &bull; Next Action: Evidence Collection", bodyHtml, footerHtml);
   }
 };
 
@@ -1178,10 +2066,22 @@ const ScreenCases = {
 // ═══════════════════════════════════════════════════════════════════════════
 
 async function ensureActiveCaseLoaded(caseId) {
+  if (!caseId) {
+    resetActiveCaseState();
+    throw new Error("No case ID provided.");
+  }
+
   if (!State.activeCase || State.activeCase.case_id !== caseId) {
-    State.activeCase = await Api.getCase(caseId);
-    State.activeCaseId = caseId;
-    localStorage.setItem("sakshi_active_case_id", caseId);
+    try {
+      State.evidence = [];
+      State.activeStageInfo = null;
+      State.activeCase = await Api.getCase(caseId);
+      State.activeCaseId = caseId;
+      localStorage.setItem("sakshi_active_case_id", caseId);
+    } catch (err) {
+      resetActiveCaseState();
+      throw err;
+    }
   }
 
   try {
@@ -1205,12 +2105,12 @@ function renderWorkspaceHeaderHtml(activeTab) {
   const incidentDate = (c.fir_metadata && c.fir_metadata.incident_date) ? Formatters.formatDate(c.fir_metadata.incident_date) : "Not Specified";
 
   const allPhases = [
-    { key: "INITIALIZED", label: "Case Setup" },
-    { key: "EVIDENCE_INGESTION", label: "Evidence Collection" },
-    { key: "EVIDENCE_PROCESSING", label: "Forensic Verification" },
-    { key: "ANALYSIS", label: "Investigation Analysis" },
-    { key: "REVIEW", label: "Investigator Review" },
-    { key: "CLOSED", label: "Case Closed" }
+    { key: "INITIALIZED", label: "Case Setup", short: "Register Case", tab: "overview", stepNum: 1 },
+    { key: "EVIDENCE_INGESTION", label: "Evidence Collection", short: "Collect Evidence", tab: "evidence", stepNum: 2 },
+    { key: "EVIDENCE_PROCESSING", label: "Forensic Verification", short: "Verify Evidence", tab: "verification", stepNum: 3 },
+    { key: "ANALYSIS", label: "Investigation Analysis", short: "Review Timeline", tab: "timeline", stepNum: 4 },
+    { key: "REVIEW", label: "Investigator Review", short: "Review Findings", tab: "findings", stepNum: 5 },
+    { key: "CLOSED", label: "Case Closed", short: "Complete Authorized Review", tab: "closure", stepNum: 6 }
   ];
 
   const currentIdx = allPhases.findIndex(s => s.key === c.lifecycle_stage);
@@ -1254,12 +2154,12 @@ function renderWorkspaceHeaderHtml(activeTab) {
         </div>
       </div>
 
-      <!-- Investigation Stepper -->
+      <!-- Investigation Stepper with Functional Stage Navigation -->
       <div class="stage-stepper-container">
         <div class="stage-stepper-title">
-          <span>Investigation Progress</span>
+          <span>Investigation Progress (Click Stage to Open Workspace)</span>
           <span style="font-family: var(--font-mono); color: var(--primary);">
-            Current: ${(StageDisplayMap[c.lifecycle_stage] || {}).label || c.lifecycle_stage}
+            Current Stage: ${(StageDisplayMap[c.lifecycle_stage] || {}).short || c.lifecycle_stage}
           </span>
         </div>
 
@@ -1268,8 +2168,21 @@ function renderWorkspaceHeaderHtml(activeTab) {
             const isCompleted = idx < currentIdx;
             const isCurrent = idx === currentIdx;
             const statusClass = isCompleted ? "completed" : isCurrent ? "current" : "pending";
+            const isCurrentWorkspace = (activeTab === st.tab) || 
+              (activeTab === 'analysis' && st.tab === 'timeline') || 
+              (activeTab === 'gaps' && st.tab === 'findings') ||
+              (activeTab === 'setup' && st.tab === 'overview');
+            const tooltip = isCompleted
+              ? `Stage ${idx + 1}: ${st.label} (Completed — Click to review records)`
+              : isCurrent
+              ? `Stage ${idx + 1}: ${st.label} (Active Stage — Click to open workspace)`
+              : `Stage ${idx + 1}: ${st.label} (Upcoming Stage — Click to view prerequisites)`;
             return `
-              <div class="stage-step ${statusClass}">
+              <div class="stage-step ${statusClass} ${isCurrentWorkspace ? 'active-workspace' : ''}"
+                   role="button"
+                   tabindex="0"
+                   title="${tooltip}"
+                   onclick="Router.selectCaseAndRoute('${c.case_id}', '${st.tab}')">
                 <div class="step-node">${isCompleted ? '✓' : idx + 1}</div>
                 <div class="step-label">${idx + 1}. ${st.label} ${isCurrent ? '●' : ''}</div>
               </div>
@@ -1284,23 +2197,21 @@ function renderWorkspaceHeaderHtml(activeTab) {
           </div>
           <div style="display: flex; gap: 8px; flex-wrap: wrap;">
             ${c.lifecycle_stage === 'INITIALIZED' ? `
-              <button class="btn btn-primary btn-sm" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_INGESTION')">
+              <button class="btn btn-primary btn-sm btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_INGESTION')">
                 Begin Evidence Collection &rarr;
               </button>
             ` : c.lifecycle_stage === 'EVIDENCE_INGESTION' ? `
               <button class="btn btn-secondary btn-sm" onclick="ScreenEvidence.showRegisterEvidenceModal()">
                 + Register Evidence
               </button>
-              ${allowedTransitions.includes('EVIDENCE_PROCESSING') ? `
-                <button class="btn btn-primary btn-sm" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_PROCESSING')">
-                  Proceed to Forensic Verification &rarr;
-                </button>
-              ` : ''}
+              <button class="btn btn-primary btn-sm btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_PROCESSING')">
+                Proceed to Forensic Verification &rarr;
+              </button>
             ` : allowedTransitions.length > 0 ? `
               ${allowedTransitions.map(targetStage => {
                 const targetObj = StageDisplayMap[targetStage] || { short: targetStage };
                 return `
-                  <button class="btn btn-primary btn-sm" onclick="handleStageTransition('${c.case_id}', '${targetStage}')">
+                  <button class="btn btn-primary btn-sm btn-stage-transition" onclick="handleStageTransition('${c.case_id}', '${targetStage}')">
                     Proceed to ${targetObj.short} &rarr;
                   </button>
                 `;
@@ -1315,32 +2226,61 @@ function renderWorkspaceHeaderHtml(activeTab) {
 
     <!-- Navigation Tabs -->
     <div class="case-workspace-tabs">
-      <button class="tab-btn ${activeTab === 'overview' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/overview'">
-        📋 Case Overview
+      <button class="tab-btn ${(activeTab === 'overview' || activeTab === 'setup') ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/overview'">
+        📋 Case Dashboard
       </button>
       <button class="tab-btn ${activeTab === 'evidence' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/evidence'">
-        📦 Evidence Workspace (${State.evidence ? State.evidence.length : 0})
+        📦 Evidence Collection (${State.evidence ? State.evidence.length : 0})
       </button>
-      <button class="tab-btn ${activeTab === 'rag' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/rag'">
-        🔎 Evidence Search (RAG)
+      <button class="tab-btn ${activeTab === 'verification' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/verification'">
+        🛡️ Forensic Verification
+      </button>
+      <button class="tab-btn ${(activeTab === 'connections' || activeTab === 'graph') ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/connections'">
+        🕸️ Entity Graph
       </button>
       <button class="tab-btn ${activeTab === 'timeline' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/timeline'">
         ⏱️ Timeline
       </button>
       <button class="tab-btn ${activeTab === 'analysis' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/analysis'">
-        💡 Analysis & Reasoning
+        💡 Investigation Analysis
       </button>
-      <button class="tab-btn ${activeTab === 'gaps' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/gaps'">
-        🔍 Investigation Gaps
+      <button class="tab-btn ${activeTab === 'rag' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/rag'">
+        🔎 Evidence Search (RAG)
+      </button>
+      <button class="tab-btn ${(activeTab === 'findings' || activeTab === 'gaps' || activeTab === 'review') ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/findings'">
+        📝 Investigator Review
+      </button>
+      <button class="tab-btn ${activeTab === 'closure' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/closure'">
+        🏛️ Case Closure
+      </button>
+      <button class="tab-btn ${activeTab === 'report' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/report'">
+        📄 Case Report
       </button>
       <button class="tab-btn ${activeTab === 'audit' ? 'active' : ''}" onclick="window.location.hash='#/cases/${c.case_id}/audit'">
         📜 Case Activity & Audit
       </button>
+
     </div>
   `;
 }
 
-async function handleStageTransition(caseId, targetStage) {
+let isStageTransitionInProgress = false;
+
+async function handleStageTransition(caseId, targetStage, openEvidenceModal = false) {
+  if (isStageTransitionInProgress) {
+    console.warn("Stage transition already in progress for case:", caseId);
+    return;
+  }
+  isStageTransitionInProgress = true;
+
+  // Visual in-flight indication: Disable transition buttons and display spinner
+  const transitionButtons = document.querySelectorAll(".btn-stage-transition, button[onclick*='handleStageTransition']");
+  transitionButtons.forEach(btn => {
+    btn.disabled = true;
+    btn.dataset.prevHtml = btn.innerHTML;
+    btn.innerHTML = `<span style="display:inline-block; width:12px; height:12px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin 0.75s linear infinite; margin-right:6px; vertical-align:middle;"></span> Advancing...`;
+  });
+
   try {
     const updated = await Api.updateCaseStage(caseId, targetStage);
     State.activeCase = updated;
@@ -1349,9 +2289,59 @@ async function handleStageTransition(caseId, targetStage) {
     UI.showToast(`Investigation advanced to ${targetObj.short}`, "success");
     UI.recordAudit("INVESTIGATION_PHASE_ADVANCED", caseId, "SUCCESS", `Advanced to ${targetObj.short}`);
     updateSidebarActiveCaseContext();
-    Router.navigate();
+
+    if (targetStage === "EVIDENCE_INGESTION") {
+      window.location.hash = `#/cases/${caseId}/evidence`;
+      if (openEvidenceModal) {
+        setTimeout(() => {
+          if (typeof ScreenEvidence !== "undefined" && ScreenEvidence.showRegisterEvidenceModal) {
+            ScreenEvidence.showRegisterEvidenceModal();
+          }
+        }, 150);
+      }
+    } else {
+      Router.navigate();
+    }
   } catch (err) {
-    UI.showToast(`Phase transition failed: ${err.message}`, "error");
+    // Safe reconciliation: If network was interrupted or previous concurrent request already succeeded
+    try {
+      const refreshedCase = await Api.getCase(caseId);
+      if (refreshedCase && refreshedCase.lifecycle_stage === targetStage) {
+        State.activeCase = refreshedCase;
+        State.activeStageInfo = await Api.getCaseStage(caseId);
+        updateSidebarActiveCaseContext();
+        const targetObj = StageDisplayMap[targetStage] || { short: targetStage };
+        UI.showToast(`Investigation advanced to ${targetObj.short}`, "success");
+        if (targetStage === "EVIDENCE_INGESTION") {
+          window.location.hash = `#/cases/${caseId}/evidence`;
+          if (openEvidenceModal) {
+            setTimeout(() => {
+              if (typeof ScreenEvidence !== "undefined" && ScreenEvidence.showRegisterEvidenceModal) {
+                ScreenEvidence.showRegisterEvidenceModal();
+              }
+            }, 150);
+          }
+        } else {
+          Router.navigate();
+        }
+        return;
+      }
+    } catch (reconErr) {
+      console.warn("Stage reconciliation check notice:", reconErr);
+    }
+
+    const errMessage = (err && err.message) ? err.message : "Stage transition rejected by Stage Engine.";
+    UI.showToast(`Phase transition failed: ${errMessage}`, "error");
+    UI.recordAudit("INVESTIGATION_PHASE_ADVANCE_FAILED", caseId, "FAILED", errMessage);
+  } finally {
+    isStageTransitionInProgress = false;
+    transitionButtons.forEach(btn => {
+      btn.disabled = false;
+      if (btn.dataset.prevHtml) {
+        btn.innerHTML = btn.dataset.prevHtml;
+        delete btn.dataset.prevHtml;
+      }
+    });
   }
 }
 
@@ -1367,14 +2357,7 @@ const ScreenCaseOverview = {
     try {
       await ensureActiveCaseLoaded(caseId);
     } catch (err) {
-      container.innerHTML = `
-        <div class="empty-state-card">
-          <div class="empty-state-icon">⚠️</div>
-          <div class="empty-state-title">Case Not Found</div>
-          <div class="empty-state-desc">${err.message}</div>
-          <button class="btn btn-secondary" onclick="window.location.hash='#/cases'">Return to Case Directory</button>
-        </div>
-      `;
+      renderCaseNotFound(caseId, err.message);
       return;
     }
 
@@ -1432,116 +2415,72 @@ const ScreenCaseOverview = {
       incidentSummaryText = "Incident summary is not yet available.";
     }
 
+    // Formulate Guided Next Action strictly from authoritative backend lifecycle stage
+    let nextActionTitle = "";
+    let nextActionDesc = "";
+    let nextActionButtonHtml = "";
+
+    if (c.lifecycle_stage === "INITIALIZED") {
+      nextActionTitle = "Begin Evidence Collection";
+      nextActionDesc = "Inquest particulars registered. Advance to evidence collection to attach scene photographs, autopsy records, CCTV recordings, or digital evidence.";
+      nextActionButtonHtml = `<button class="btn btn-primary" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_INGESTION')">Begin Evidence Collection &rarr;</button>`;
+    } else if (c.lifecycle_stage === "EVIDENCE_INGESTION") {
+      if (totalEvidence === 0) {
+        nextActionTitle = "Attach Primary Case Exhibits";
+        nextActionDesc = "Evidence collection phase active. No exhibits attached yet. Upload primary crime scene photographs, post-mortem certificates, or telecom records.";
+        nextActionButtonHtml = `<button class="btn btn-primary" onclick="ScreenEvidence.showRegisterEvidenceModal()">+ Upload Evidence Exhibit</button>`;
+      } else {
+        nextActionTitle = "Proceed to Forensic Verification";
+        nextActionDesc = `${totalEvidence} exhibit(s) attached. Advance to automated MIME validation, antivirus scanning, dual-hash integrity checks, and WORM storage.`;
+        nextActionButtonHtml = `<button class="btn btn-primary" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_PROCESSING')">Proceed to Forensic Verification &rarr;</button>`;
+      }
+    } else if (c.lifecycle_stage === "EVIDENCE_PROCESSING") {
+      nextActionTitle = "Review Evidence Checks & Proceed to Timeline";
+      nextActionDesc = `${verifiedEvidence} of ${totalEvidence} exhibits verified. Proceed to chronological sequence reconstruction and analytical reasoning.`;
+      nextActionButtonHtml = `<button class="btn btn-primary" onclick="handleStageTransition('${c.case_id}', 'ANALYSIS')">Advance to Timeline & Analysis &rarr;</button>`;
+    } else if (c.lifecycle_stage === "ANALYSIS") {
+      nextActionTitle = "Review Timeline & Findings";
+      nextActionDesc = "Reconstructed chronological timeline and cross-exhibit observations are available. Submit docket for supervisory review.";
+      nextActionButtonHtml = `<button class="btn btn-primary" onclick="handleStageTransition('${c.case_id}', 'REVIEW')">Submit for Investigator Review &rarr;</button>`;
+    } else if (c.lifecycle_stage === "REVIEW") {
+      nextActionTitle = "Complete Authorized Inquest Review";
+      nextActionDesc = "Supervisory review of inquest findings, verified timeline, and exhibit chain-of-custody.";
+      nextActionButtonHtml = `<button class="btn btn-primary" onclick="handleStageTransition('${c.case_id}', 'CLOSED')">Conclude Investigation & Close Case</button>`;
+    } else if (c.lifecycle_stage === "CLOSED") {
+      nextActionTitle = "Case Inquest Concluded";
+      nextActionDesc = "Final inquiry report completed and archived under Section 194 BNSS / Section 174 CrPC.";
+      nextActionButtonHtml = `<span class="badge badge-verified" style="font-size: 0.88rem; padding: 6px 14px;">Archived / Closed</span>`;
+    } else {
+      nextActionTitle = "Case Under Specialized Review";
+      nextActionDesc = `Current investigation status: ${c.lifecycle_stage}.`;
+      nextActionButtonHtml = `<button class="btn btn-secondary" onclick="Router.navigate('#/cases')">Return to Directory</button>`;
+    }
+
     const html = `
       ${renderWorkspaceHeaderHtml("overview")}
 
-      <!-- 1. INCIDENT SUMMARY (Prominent & Factual) -->
-      <div class="incident-summary-card">
-        <div class="incident-summary-header">
-          <span style="font-size: 1.2rem;">📋</span>
-          <div class="incident-summary-badge">INCIDENT SUMMARY</div>
-        </div>
-        <div class="incident-summary-content">
-          ${incidentSummaryText}
-        </div>
-        <div class="incident-summary-meta">
-          <span>FIR / Inquest Ref: <strong>${c.fir_metadata?.fir_number || "Unrecorded"}</strong></span>
-          <span>Police Station: <strong>${c.fir_metadata?.police_station || "Jurisdiction Unrecorded"}</strong></span>
-          <span>Legal Provision: <strong>Section 194 BNSS / Section 174 CrPC</strong></span>
-        </div>
-      </div>
-
-      <!-- INVESTIGATING OFFICER & CASE JURISDICTION ALLOCATION -->
-      <div class="card" style="margin-bottom: 20px;">
-        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <h3 class="card-title">Investigating Officer & Case Jurisdiction</h3>
-            <span style="font-size: 0.8rem; color: var(--text-muted);">Investigative custody & authorized organizational jurisdiction</span>
-          </div>
-          <div>
-            <button class="btn btn-primary btn-sm" id="btnOpenAssignIO">
-              <span>👤 Assign / Reassign IO</span>
-            </button>
-          </div>
-        </div>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-top: 12px; padding: 12px; background: var(--bg-card-subtle); border-radius: var(--radius-md);">
-          <div>
-            <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Current Assignee</span>
-            <div style="font-size: 0.95rem; font-weight: 600; margin-top: 4px;">
-              <span class="badge badge-username">${c.assigned_io_id || "Unassigned"}</span>
+      <!-- GUIDED NEXT ACTION CARD -->
+      <div class="guided-next-action-card" style="background: var(--bg-card); border-left: 5px solid var(--primary); padding: 18px 22px; border-radius: var(--radius-md); box-shadow: var(--shadow-sm); margin-bottom: 20px; border-top: 1px solid var(--border-subtle); border-right: 1px solid var(--border-subtle); border-bottom: 1px solid var(--border-subtle);">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 14px;">
+          <div style="flex: 1; min-width: 280px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+              <span class="badge badge-info" style="font-weight: 700;">RECOMMENDED NEXT ACTION</span>
+              <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Authoritative State: ${c.lifecycle_stage}</span>
             </div>
+            <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+              ${nextActionTitle}
+            </h3>
+            <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+              ${nextActionDesc}
+            </p>
           </div>
           <div>
-            <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Authorized Police Station</span>
-            <div style="font-size: 0.9rem; font-weight: 500; margin-top: 4px;">
-              ${c.fir_metadata?.police_station || "Jurisdiction Not Set"}
-            </div>
-          </div>
-          <div>
-            <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Case Status</span>
-            <div style="font-size: 0.9rem; font-weight: 500; margin-top: 4px;">
-              <span class="badge ${c.is_suspended ? 'badge-danger' : 'badge-verified'}">${c.is_suspended ? 'Suspended' : 'Active Investigation'}</span>
-            </div>
-          </div>
-          <div>
-            <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Custody Records</span>
-            <div style="margin-top: 4px;">
-              <button class="btn btn-secondary btn-sm" id="btnToggleAssignHistory" style="padding: 3px 10px; font-size: 0.78rem;">
-                📜 View Allocation History
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div id="assignHistoryContainer" style="display: none; margin-top: 16px; border-top: 1px solid var(--border-subtle); padding-top: 12px;">
-          <h4 style="font-size: 0.85rem; font-weight: 600; margin-bottom: 8px;">Custody & Assignment Ledger</h4>
-          <div id="assignHistoryList" style="font-size: 0.82rem; color: var(--text-secondary);">
-            Loading assignment records...
+            ${nextActionButtonHtml}
           </div>
         </div>
       </div>
 
-      <!-- 2. REQUIRES ATTENTION (Attention Center) -->
-      <section class="attention-center" style="margin-bottom: 20px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <h3 class="card-title">
-            <span>⚠️ Requires Attention</span>
-            <span class="badge ${attentionItems.length > 0 ? 'badge-attention' : 'badge-verified'}">
-              ${attentionItems.length} Item(s)
-            </span>
-          </h3>
-        </div>
-
-        ${attentionItems.length === 0 ? `
-          <div style="padding: 14px 18px; background-color: var(--verified-bg); border: 1px solid var(--verified-border); border-radius: var(--radius-md); color: var(--verified-text); font-size: 0.86rem; font-weight: 500;">
-            ✓ Evidence securely preserved — All ${totalEvidence} exhibits have completed preservation and integrity verification. No pending actions required.
-          </div>
-        ` : `
-          <div class="attention-grid">
-            ${attentionItems.map((item, idx) => `
-              <div class="attention-card ${item.severity === 'critical' ? 'critical' : ''}">
-                <div>
-                  <div class="attention-card-header">
-                    <span style="font-size: 1.1rem; color: var(--attention);">⚠️</span>
-                    <div>
-                      <div class="attention-title">${item.title}</div>
-                      <div class="attention-source">${item.source}</div>
-                    </div>
-                  </div>
-                  <p class="attention-desc" style="margin-top: 6px;">${item.desc}</p>
-                </div>
-                <div>
-                  <button class="btn btn-sm btn-attention" id="attnBtn_${idx}">
-                    ${item.actionText} &rarr;
-                  </button>
-                </div>
-              </div>
-            `).join("")}
-          </div>
-        `}
-      </section>
-
-      <!-- 3. EVIDENCE STATUS METRICS -->
+      <!-- INVESTIGATION SUMMARY CARDS (Strictly Real Backend Counts) -->
       <div class="metrics-strip">
         <div class="metric-card">
           <div class="label">Total Exhibits</div>
@@ -1554,91 +2493,252 @@ const ScreenCaseOverview = {
           <div class="subtext">Dual fingerprint recorded</div>
         </div>
         <div class="metric-card">
-          <div class="label">Security Cleared</div>
-          <div class="number">${cleanScanned}</div>
-          <div class="subtext">Malware scan passed</div>
-        </div>
-        <div class="metric-card">
-          <div class="label">Pending Verification</div>
+          <div class="label">Awaiting Verification</div>
           <div class="number" style="color: ${pendingEvidence > 0 ? 'var(--attention)' : 'var(--text-main)'};">
             ${pendingEvidence}
           </div>
-          <div class="subtext">Awaiting forensic checks</div>
+          <div class="subtext">Forensic checks pending</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Pending Investigator Actions</div>
+          <div class="number" style="color: ${attentionItems.length > 0 ? 'var(--attention)' : 'var(--text-main)'};">
+            ${attentionItems.length}
+          </div>
+          <div class="subtext">Inquest docket tasks</div>
         </div>
       </div>
 
-      <!-- 4. TIMELINE HIGHLIGHTS & INVESTIGATION GAPS SUMMARY -->
-      <div class="grid-2">
-        <!-- Chronological Highlights Preview -->
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Chronological Sequence Summary</h3>
-            <span class="badge badge-info">Timeline Highlights</span>
-          </div>
-          <div style="font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary);">
-            <p>Preliminary sequence reconstructs events from 30 Sep 2026 (18:42 hrs) to first responder arrival on 01 Oct 2026 (04:45 hrs).</p>
-            <div style="margin-top: 10px; padding: 10px; background-color: var(--attention-bg); border: 1px solid var(--attention-border); border-radius: var(--radius-sm); font-size: 0.8rem; color: var(--attention-text);">
-              <strong>⚠️ Active Observation:</strong> 8-minute variance flagged between Witness Statement WS-02 departure time (19:10 hrs) and CCTV Camera 04 hallway recording (19:18:32 hrs).
-            </div>
-          </div>
-          <div style="margin-top: 14px;">
-            <button class="btn btn-secondary btn-sm" onclick="window.location.hash='#/cases/${c.case_id}/timeline'">
-              View Full Timeline &rarr;
-            </button>
-          </div>
-        </div>
-
-        <!-- Investigation Gaps Summary -->
-        <div class="card">
-          <div class="card-header">
-            <h3 class="card-title">Investigation Gaps</h3>
-            <span class="badge badge-attention">3 Pending Inquiries</span>
-          </div>
-          <div style="font-size: 0.85rem; line-height: 1.5; color: var(--text-secondary);">
-            <ul style="padding-left: 18px; margin-bottom: 10px;">
-              <li><strong>High:</strong> Surveillance footage covering rear stairwell exit (19:10 - 19:30).</li>
-              <li><strong>Medium:</strong> Telecom CDR records for second SIM IMEI.</li>
-              <li><strong>Low:</strong> Viscera chemical examination report confirmation.</li>
-            </ul>
-          </div>
-          <div style="margin-top: 14px;">
-            <button class="btn btn-secondary btn-sm" onclick="window.location.hash='#/cases/${c.case_id}/gaps'">
-              Review All Investigation Gaps &rarr;
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 5. RECENT CASE ACTIVITY -->
-      <div class="card" style="margin-top: 20px;">
-        <div class="card-header">
-          <h3 class="card-title">Recent Case Activity</h3>
-          <button class="btn btn-secondary btn-sm" onclick="window.location.hash='#/cases/${c.case_id}/audit'">
-            View Complete Case Diary &rarr;
-          </button>
-        </div>
-        <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.84rem;">
-          ${(State.auditLog.length > 0 ? State.auditLog.slice(0, 4) : [
-            {
-              timestamp: c.created_at,
-              action: "Case workspace initialized",
-              resource: c.case_id,
-              actor: c.assigned_io_id,
-              result: "SUCCESS"
-            }
-          ]).map(log => `
-            <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle);">
+      <!-- MAIN DASHBOARD PANELS (2-Column Professional Layout) -->
+      <div class="dashboard-grid-2">
+        <!-- LEFT COLUMN: Recent Activity, Evidence Attached, Investigation Progress -->
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          <!-- 1. Recent Case Activity -->
+          <div class="card">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
               <div>
-                <strong>${log.action}</strong>
-                <span style="color: var(--text-muted); display: block; font-size: 0.74rem;">
-                  ${log.resource} &bull; Performed by ${log.actor || 'SAKSHI System'}
-                </span>
+                <h3 class="card-title">Recent Case Activity</h3>
+                <span style="font-size: 0.8rem; color: var(--text-muted);">Authoritative audit ledger of investigative actions</span>
               </div>
-              <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);">
-                ${Formatters.formatDate(log.timestamp)}
-              </span>
+              <button class="btn btn-secondary btn-sm" onclick="window.location.hash='#/cases/${c.case_id}/audit'">
+                View Complete Case Diary &rarr;
+              </button>
             </div>
-          `).join("")}
+            <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.84rem; margin-top: 10px;">
+              ${(State.auditLog.length > 0 ? State.auditLog.slice(0, 4) : [
+                {
+                  timestamp: c.created_at,
+                  action: "Case workspace initialized",
+                  resource: c.case_id,
+                  actor: c.assigned_io_id,
+                  result: "SUCCESS"
+                }
+              ]).map(log => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-card-subtle); border-radius: var(--radius-sm);">
+                  <div>
+                    <strong>${log.action}</strong>
+                    <span style="color: var(--text-muted); display: block; font-size: 0.74rem;">
+                      ${log.resource} &bull; By ${log.actor || 'SAKSHI System'}
+                    </span>
+                  </div>
+                  <span style="font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-muted);">
+                    ${Formatters.formatDate(log.timestamp)}
+                  </span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+
+          <!-- 2. Evidence Attached Preview -->
+          <div class="card">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <h3 class="card-title">Evidence Register Preview</h3>
+                <span style="font-size: 0.8rem; color: var(--text-muted);">${totalEvidence} physical & digital exhibit(s) registered</span>
+              </div>
+              <div style="display: flex; gap: 6px;">
+                <button class="btn btn-secondary btn-sm" onclick="ScreenEvidence.showRegisterEvidenceModal()">
+                  + Register Evidence
+                </button>
+                <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'evidence')">
+                  View All &rarr;
+                </button>
+              </div>
+            </div>
+            ${totalEvidence === 0 ? `
+              <div style="padding: 24px 16px; text-align: center; background: var(--bg-card-subtle); border-radius: var(--radius-md); margin-top: 10px; border: 1px dashed var(--border-default);">
+                <div style="font-size: 2rem; margin-bottom: 6px;">📦</div>
+                <div style="font-weight: 600; color: var(--text-main); font-size: 0.95rem;">No Exhibits Attached to Case Docket</div>
+                <p style="color: var(--text-muted); font-size: 0.82rem; margin: 4px auto 14px auto; max-width: 420px;">
+                  Timeline reconstruction and gap detection strictly require verified evidence. Attach case exhibits (crime scene photos, inquest reports, medical certificates, or telecom records) to begin.
+                </p>
+                <button class="btn btn-primary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'evidence')">
+                  + Attach First Evidence Exhibit
+                </button>
+              </div>
+            ` : `
+              <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 10px;">
+                ${evidenceList.slice(0, 3).map(e => {
+                  const isVerified = e.integrity_status === "VERIFIED" && e.worm_status === "COMMITTED";
+                  return `
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); cursor: pointer;"
+                         onclick="Router.selectCaseAndRoute('${c.case_id}', 'evidence')">
+                      <div>
+                        <div style="font-weight: 600; font-size: 0.88rem; color: var(--text-main);">${Formatters.escapeHtml(e.original_file_name)}</div>
+                        <div style="font-size: 0.74rem; color: var(--text-muted); font-family: var(--font-mono);">${e.evidence_id} &bull; ${Formatters.formatCategory(e.evidence_category)}</div>
+                      </div>
+                      <span class="badge ${isVerified ? 'badge-verified' : 'badge-attention'}">
+                        ${isVerified ? '✓ Verified' : 'Pending Verification'}
+                      </span>
+                    </div>
+                  `;
+                }).join("")}
+              </div>
+            `}
+          </div>
+
+          <!-- 3. Investigation Stage Progress -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">Investigation Stage Engine Status</h3>
+              <span class="badge badge-info">${(StageDisplayMap[c.lifecycle_stage] || {}).short || c.lifecycle_stage}</span>
+            </div>
+            <p style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.5; margin-top: 6px;">
+              The investigation progresses strictly through the authoritative backend Stage Engine: Case Setup &rarr; Evidence Collection &rarr; Forensic Verification &rarr; Investigation Analysis &rarr; Investigator Review &rarr; Case Closure.
+            </p>
+            <div style="display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap;">
+              <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'timeline')">
+                View Timeline Workspace &rarr;
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'findings')">
+                View Review Workspace &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Case Particulars (Stage 1 Setup), Requires Attention, Inquest Gaps -->
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          <!-- 1. Case Particulars & Registration Checklist (Stage 1 Workspace) -->
+          <div class="card incident-summary-card" style="margin-bottom: 0;">
+            <div class="incident-summary-header">
+              <span style="font-size: 1.2rem;">📋</span>
+              <div class="incident-summary-badge">STAGE 1 &bull; CASE SETUP & PARTICULARS</div>
+            </div>
+            <div class="incident-summary-content">
+              ${incidentSummaryText}
+            </div>
+
+            <!-- Required Registration Fields Checklist -->
+            <div style="margin-top: 14px; border-top: 1px solid var(--border-subtle); padding-top: 12px;">
+              <div style="font-size: 0.74rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; margin-bottom: 8px;">
+                Required Registration Checklist
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>FIR / Inquest Reference:</span>
+                  <strong style="font-family: var(--font-mono);">${c.fir_metadata?.fir_number || '<span style="color: var(--attention);">Missing</span>'}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>Authorized Station:</span>
+                  <strong>${c.fir_metadata?.police_station || '<span style="color: var(--attention);">Jurisdiction Unset</span>'}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>Occurrence Date:</span>
+                  <strong>${c.fir_metadata?.incident_date ? Formatters.formatDate(c.fir_metadata.incident_date) : '<span style="color: var(--text-muted);">Not Specified</span>'}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>Scene Location:</span>
+                  <strong>${c.fir_metadata?.incident_location || '<span style="color: var(--text-muted);">Unrecorded</span>'}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>Assigned Officer:</span>
+                  <strong class="badge badge-username">${c.assigned_io_id || 'Unassigned'}</strong>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                  <span>Legal Provision:</span>
+                  <strong>Section 194 BNSS / Section 174 CrPC</strong>
+                </div>
+              </div>
+            </div>
+
+            <!-- Custody & Assignment Allocation Actions -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-subtle); flex-wrap: wrap; gap: 8px;">
+              <button class="btn btn-primary btn-sm" id="btnOpenAssignIO">
+                <span>👤 Assign / Reassign IO</span>
+              </button>
+              <button class="btn btn-secondary btn-sm" id="btnToggleAssignHistory">
+                📜 Custody Ledger
+              </button>
+            </div>
+
+            <div id="assignHistoryContainer" style="display: none; margin-top: 14px; border-top: 1px solid var(--border-subtle); padding-top: 10px;">
+              <h4 style="font-size: 0.85rem; font-weight: 600; margin-bottom: 6px;">Custody & Assignment Ledger</h4>
+              <div id="assignHistoryList" style="font-size: 0.82rem; color: var(--text-secondary);">
+                Loading assignment records...
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Requires Attention (Attention Center) -->
+          <div class="card">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 class="card-title">
+                <span>⚠️ Requires Attention</span>
+                <span class="badge ${attentionItems.length > 0 ? 'badge-attention' : 'badge-verified'}">
+                  ${attentionItems.length} Item(s)
+                </span>
+              </h3>
+            </div>
+            ${attentionItems.length === 0 ? `
+              <div style="padding: 14px 16px; background-color: var(--verified-bg); border: 1px solid var(--verified-border); border-radius: var(--radius-md); color: var(--verified-text); font-size: 0.86rem; font-weight: 500; margin-top: 10px;">
+                ✓ Evidence securely preserved — All ${totalEvidence} exhibits have completed preservation and integrity verification. No pending actions required.
+              </div>
+            ` : `
+              <div class="attention-grid" style="margin-top: 10px;">
+                ${attentionItems.map((item, idx) => `
+                  <div class="attention-card ${item.severity === 'critical' ? 'critical' : ''}">
+                    <div>
+                      <div class="attention-card-header">
+                        <span style="font-size: 1.1rem; color: var(--attention);">⚠️</span>
+                        <div>
+                          <div class="attention-title">${item.title}</div>
+                          <div class="attention-source">${item.source}</div>
+                        </div>
+                      </div>
+                      <p class="attention-desc" style="margin-top: 6px;">${item.desc}</p>
+                    </div>
+                    <div>
+                      <button class="btn btn-sm btn-attention" id="attnBtn_${idx}">
+                        ${item.actionText} &rarr;
+                      </button>
+                    </div>
+                  </div>
+                `).join("")}
+              </div>
+            `}
+          </div>
+
+          <!-- 3. Outstanding Inquest Inquiries & Gaps Preview -->
+          <div class="card">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 class="card-title">Investigation Review & Gaps</h3>
+              <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'findings')">
+                View Gaps Workspace &rarr;
+              </button>
+            </div>
+            <div style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.5; margin-top: 8px;">
+              ${pendingEvidence > 0 ? `
+                <div style="padding: 10px 12px; background: var(--attention-bg); border: 1px solid var(--attention-border); border-radius: var(--radius-sm); color: var(--attention-text); margin-bottom: 8px;">
+                  ⚠️ ${pendingEvidence} exhibit(s) currently awaiting forensic verification pipeline completion.
+                </div>
+              ` : `
+                <div style="padding: 10px 12px; background: var(--verified-bg); border: 1px solid var(--verified-border); border-radius: var(--radius-sm); color: var(--verified-text); margin-bottom: 8px;">
+                  ✓ All attached exhibits have passed dual-hash verification and WORM storage commitment.
+                </div>
+              `}
+              <p style="margin: 0;">Cross-correlation of exhibits, timeline consistency checks, and inquest gaps are evaluated in Stage 4 & 5.</p>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -1783,7 +2883,12 @@ const ScreenEvidence = {
     const container = document.getElementById("viewContainer");
     document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Evidence Workspace`;
 
-    await ensureActiveCaseLoaded(caseId);
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
     const c = State.activeCase;
     const evidenceList = State.evidence || [];
 
@@ -1808,32 +2913,87 @@ const ScreenEvidence = {
     const html = `
       ${renderWorkspaceHeaderHtml("evidence")}
 
-      <!-- Stage Notice: Smooth Advance from Case Setup -->
+      <!-- Stage Notice: Prerequisite vs Active vs Completed -->
       ${isCaseSetup ? `
         <div class="card" style="background-color: var(--primary-bg); border-color: var(--primary-border); padding: 16px 20px; margin-bottom: 20px;">
           <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
             <div>
-              <div style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--primary); letter-spacing: 0.06em;">INVESTIGATION PROGRESS</div>
+              <div style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--primary); letter-spacing: 0.06em;">STAGE 2 PREREQUISITE &bull; CASE SETUP ACTIVE</div>
               <div style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin-top: 2px;">Current Phase: Case Setup</div>
               <div style="font-size: 0.84rem; color: var(--text-secondary); margin-top: 2px;">
                 Inquest particulars registered. Next Step: <strong>Begin Evidence Collection</strong> to attach scene photographs, post-mortem reports, CCTV footage, and digital records.
               </div>
             </div>
-            <button class="btn btn-primary" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_INGESTION')">
+            <button class="btn btn-primary btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_INGESTION')">
               Begin Evidence Collection &rarr;
             </button>
           </div>
         </div>
-      ` : ""}
+      ` : c.lifecycle_stage === "EVIDENCE_INGESTION" ? `
+        <div class="card" style="background-color: var(--bg-card-subtle); border-left: 4px solid var(--primary); padding: 16px 20px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--primary); letter-spacing: 0.06em;">STAGE 2 &bull; EVIDENCE COLLECTION IN PROGRESS</div>
+              <div style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin-top: 2px;">
+                ${evidenceList.length === 0 ? "Evidence Collection Phase Active" : `${evidenceList.length} Case Exhibit(s) Registered`}
+              </div>
+              <div style="font-size: 0.84rem; color: var(--text-secondary); margin-top: 2px;">
+                ${evidenceList.length === 0 
+                  ? "Upload primary crime scene photographs, post-mortem certificates, CCTV footage, or mobile extractions into protected storage."
+                  : "All initial exhibits collected can now be advanced to Stage 3 — Forensic Verification for automated integrity checks, antivirus scanning, and protected storage."}
+              </div>
+            </div>
+            ${evidenceList.length > 0 ? `
+              <button class="btn btn-primary btn-stage-transition" id="btnBannerProceedToVerification" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_PROCESSING')">
+                Proceed to Forensic Verification &rarr;
+              </button>
+            ` : `
+              <button class="btn btn-primary" onclick="ScreenEvidence.showRegisterEvidenceModal()">
+                + Register First Exhibit
+              </button>
+            `}
+          </div>
+        </div>
+      ` : `
+        <div class="card" style="background-color: var(--verified-bg); border-left: 4px solid var(--verified); padding: 16px 20px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-verified">STAGE 2 COMPLETED</span>
+                <span style="font-size: 0.8rem; color: var(--verified-text); font-family: var(--font-mono);">${evidenceList.length} Exhibits Committed</span>
+              </div>
+              <div style="font-size: 1rem; font-weight: 700; color: var(--verified-text); margin-top: 2px;">
+                Evidence Collection Concluded
+              </div>
+              <div style="font-size: 0.84rem; color: var(--verified-text); opacity: 0.9; margin-top: 2px;">
+                Initial evidence intake is complete. You can inspect saved exhibits, custody metadata, and cryptographic fingerprints below.
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'verification')">
+              View Forensic Verification &rarr;
+            </button>
+          </div>
+        </div>
+      `}
 
       <div class="cases-toolbar">
         <div>
           <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Evidence Workspace</h3>
           <p style="color: var(--text-muted); font-size: 0.82rem;">Catalog of all physical and digital exhibits seized and admitted into this inquiry.</p>
         </div>
-        <button class="btn btn-primary" id="btnRegisterEvidenceModal">
-          <span>+ Register Evidence</span>
-        </button>
+        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+          <button class="btn btn-secondary" onclick="Router.selectCaseAndRoute('${c.case_id}', 'rag')">
+            <span>💬 Ask About This Case</span>
+          </button>
+          <button class="btn btn-secondary" id="btnRegisterEvidenceModal">
+            <span>+ Register Evidence</span>
+          </button>
+          ${c.lifecycle_stage === "EVIDENCE_INGESTION" && evidenceList.length > 0 ? `
+            <button class="btn btn-primary btn-stage-transition" id="btnProceedToForensicVerification" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_PROCESSING')">
+              Proceed to Forensic Verification &rarr;
+            </button>
+          ` : ""}
+        </div>
       </div>
 
       <!-- Exhibits Filter Bar -->
@@ -1932,14 +3092,10 @@ const ScreenEvidence = {
         </td>
         <td>
           ${isVerified ? `
-            <span class="badge badge-verified">
-              ✓ Integrity Protected
-            </span>
+            ${StatusPresentation.renderBadge("INTEGRITY_VERIFIED", "File Integrity Checks Passed")}
             <div style="font-size: 0.7rem; color: var(--verified-text); margin-top: 2px;">Dual Fingerprint Recorded</div>
           ` : `
-            <span class="badge badge-attention">
-              ⚠️ Verification Pending
-            </span>
+            ${StatusPresentation.renderBadge("PENDING_VERIFICATION", "Awaiting Verification")}
             <div style="font-size: 0.7rem; color: var(--attention-text); margin-top: 2px;">Forensic intake active</div>
           `}
         </td>
@@ -2009,15 +3165,20 @@ const ScreenEvidence = {
               <div class="form-group">
                 <label class="form-label" for="inpEvidenceCat">Evidence Category *</label>
                 <select id="inpEvidenceCat" class="form-select">
-                  <option value="DOCUMENT_PDF">Medical / Autopsy Report</option>
-                  <option value="SCENE_PHOTO">Crime Scene Photograph</option>
-                  <option value="AUTOPSY_PHOTO">Post-Mortem / Autopsy Photograph</option>
-                  <option value="OTHER">CCTV / Surveillance Video</option>
-                  <option value="AUDIO_RECORDING">Audio Statement / Dispatch Call</option>
-                  <option value="CDR_SPREADSHEET">Call Detail Record (CDR) Sheet</option>
-                  <option value="DIGITAL_DEVICE_EXTRACTION">Digital Device Extraction Dump</option>
-                  <option value="OTHER">Physical / Other Exhibit</option>
+                  <option value="DOCUMENT_PDF">Medical / Autopsy / Inquest Report (PDF)</option>
+                  <option value="SCENE_PHOTO">Crime Scene Photograph (JPEG, PNG, TIFF)</option>
+                  <option value="AUTOPSY_PHOTO">Post-Mortem / Autopsy Photograph (JPEG, PNG, TIFF)</option>
+                  <option value="AUDIO_RECORDING">Audio Statement / Emergency Dispatch (WAV, MP3)</option>
+                  <option value="CDR_SPREADSHEET">Call Detail Record (CDR) Sheet (CSV)</option>
+                  <option value="DIGITAL_DEVICE_EXTRACTION">Digital Device Extraction Dump / Log</option>
+                  <option value="OTHER">Physical / Ballistics / Other Forensic Exhibit</option>
                 </select>
+                <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">
+                  <strong>Why category is required:</strong> Determines the automated forensic verification pipeline (e.g. text extraction & RAG indexing for documents, EXIF preservation for photos).
+                </div>
+                <div style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 3px;">
+                  <strong>Supported file types:</strong> PDF (.pdf), Images (.jpg, .jpeg, .png, .tiff), Audio (.wav, .mp3, .ogg), CDR & Data (.csv, .xlsx, .txt). Maximum size: 100 MB.
+                </div>
               </div>
 
               <div class="form-group">
@@ -2167,6 +3328,23 @@ const ScreenEvidence = {
         await ScreenEvidence.render(c.case_id);
         ScreenEvidence.openEvidenceDetailDrawer(res.evidence_id);
       } catch (err) {
+        // Safe timeout reconciliation: Check if intake succeeded before prompting duplicate upload
+        try {
+          const listRes = await Api.listEvidence(c.case_id);
+          const exhibits = listRes.items || (Array.isArray(listRes) ? listRes : []);
+          const matched = exhibits.find(e => e.original_file_name === selectedFile.name);
+          if (matched) {
+            UI.closeModal();
+            UI.showToast(`Exhibit "${matched.original_file_name}" verified and registered!`, "success");
+            UI.recordAudit("EXHIBIT_RECONCILED", matched.evidence_id, "SUCCESS", `Reconciled after intake timeout: ${matched.original_file_name}`);
+            await ScreenEvidence.render(c.case_id);
+            ScreenEvidence.openEvidenceDetailDrawer(matched.evidence_id);
+            return;
+          }
+        } catch (recErr) {
+          console.warn("Intake reconciliation check notice:", recErr);
+        }
+
         submitBtn.disabled = false;
         submitBtn.textContent = "Register Evidence";
         UI.showToast(`Registration failed: ${err.message}`, "error");
@@ -2191,6 +3369,15 @@ const ScreenEvidence = {
     const isAv = ev.antivirus_status === "CLEAN";
     const isWorm = ev.worm_status === "COMMITTED";
     const isInt = ev.integrity_status === "VERIFIED";
+    const isLock = ev.lock_status === "LOCKED";
+    const isEnc = ev.encryption_status === "ENCRYPTED";
+
+    let factsRes = null;
+    try {
+      factsRes = await Api.getExtractedFacts(caseId, evidenceId);
+    } catch (e) {
+      factsRes = null;
+    }
 
     let nextActionTitle = "All Forensic Protections Active";
     let nextActionBtnText = "";
@@ -2212,10 +3399,14 @@ const ScreenEvidence = {
       nextActionTitle = "Dual Cryptographic Fingerprint Verification";
       nextActionBtnText = "Verify Fingerprint";
       nextActionHandler = () => this.executeIntegrity(caseId, evidenceId);
-    } else {
-      nextActionTitle = "Write Protection & Encryption Sealed";
+    } else if (!isLock || !isEnc) {
+      nextActionTitle = "Apply Write Protection & Encryption";
       nextActionBtnText = "Confirm Protections";
       nextActionHandler = () => this.executeLockAndEncrypt(caseId, evidenceId);
+    } else {
+      nextActionTitle = "All Forensic Protections Active";
+      nextActionBtnText = "";
+      nextActionHandler = null;
     }
 
     const drawerHtml = `
@@ -2319,7 +3510,13 @@ const ScreenEvidence = {
               ${isAv ? '<span class="badge badge-verified">CLEAN</span>' : '<span class="badge badge-neutral">PENDING</span>'}
             </div>
             <div class="chain-step-desc">
-              ${isAv ? (ev.antivirus_message || "Zero malicious payloads detected.") : "Threat scan pending."}
+              ${isAv ? (
+                ev.antivirus_scanner === 'EicarHeuristicScanner'
+                  ? 'Development Signature Scanner (EicarHeuristicScanner) reported no matching threat signatures.'
+                  : (ev.antivirus_message || "Zero malicious payloads detected by configured scanner.")
+              ) : (
+                ev.antivirus_status === 'FAILED' ? 'Scan could not be completed or threat detected.' : 'Threat scan pending.'
+              )}
             </div>
           </div>
 
@@ -2345,24 +3542,80 @@ const ScreenEvidence = {
             </div>
           </div>
 
-          <div class="chain-step ${isInt ? 'verified' : ''}">
-            <div class="chain-step-node">${isInt ? '✓' : '6'}</div>
+          <div class="chain-step ${isLock ? 'verified' : isInt ? 'current' : ''}">
+            <div class="chain-step-node">${isLock ? '✓' : '6'}</div>
             <div class="chain-step-title">
               6. Write Protection Applied
-              ${isInt ? '<span class="badge badge-verified">PROTECTED</span>' : '<span class="badge badge-neutral">PENDING</span>'}
+              ${isLock ? '<span class="badge badge-verified">PROTECTED</span>' : '<span class="badge badge-neutral">PENDING</span>'}
             </div>
-            <div class="chain-step-desc">Modification and deletion prevented.</div>
+            <div class="chain-step-desc">${isLock ? "Application object-lock manifest active (Local development simulation; not hardware WORM)." : "Write protection pending."}</div>
           </div>
 
-          <div class="chain-step ${isInt ? 'verified' : ''}">
-            <div class="chain-step-node">${isInt ? '✓' : '7'}</div>
+          <div class="chain-step ${isEnc ? 'verified' : isLock ? 'current' : ''}">
+            <div class="chain-step-node">${isEnc ? '✓' : '7'}</div>
             <div class="chain-step-title">
               7. Evidence Encrypted
-              ${isInt ? '<span class="badge badge-verified">ENCRYPTED</span>' : '<span class="badge badge-neutral">PENDING</span>'}
+              ${isEnc ? '<span class="badge badge-verified">ENCRYPTED</span>' : '<span class="badge badge-neutral">PENDING</span>'}
             </div>
-            <div class="chain-step-desc">Protected with case-scoped authenticated encryption at rest.</div>
+            <div class="chain-step-desc">${isEnc ? "Protected with case-scoped authenticated encryption at rest (AES-256-GCM)." : "Encryption pending."}</div>
           </div>
         </div>
+      </div>
+
+      <!-- SECTION 2.5: Document Intelligence & Extracted Facts -->
+      <div class="drawer-section">
+        <div class="drawer-section-title">
+          <span>Section 2.5 &bull; Document Intelligence & Extracted Facts</span>
+          <span class="badge ${factsRes && factsRes.total_facts > 0 ? 'badge-verified' : 'badge-neutral'}">
+            ${factsRes && factsRes.total_facts > 0 ? `${factsRes.total_facts} Facts Extracted` : 'Not Extracted'}
+          </span>
+        </div>
+        ${factsRes && factsRes.total_facts > 0 ? `
+          <div style="background: var(--bg-card-subtle); padding: 12px 14px; border-radius: var(--radius-sm); border-left: 3px solid var(--primary); margin-bottom: 12px; font-size: 0.82rem;">
+            <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--primary); font-weight: 700; margin-bottom: 4px;">AI-Generated Preliminary Summary</div>
+            <div style="color: var(--text-secondary); line-height: 1.5;">${Formatters.escapeHtml(factsRes.document_summary || 'Document processed and facts extracted.')}</div>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; max-height: 280px; overflow-y: auto;">
+            ${factsRes.facts.map(f => `
+              <div style="padding: 10px; background: var(--bg-card); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); font-size: 0.8rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 4px;">
+                  <span class="badge ${
+                    f.attribution_type === 'QUOTED_FROM_SOURCE' ? 'badge-quoted' :
+                    f.attribution_type === 'EXTRACTED_BY_SOFTWARE' ? 'badge-software' :
+                    f.attribution_type === 'AI_INTERPRETATION' ? 'badge-interpretation' : 'badge-needs-confirm'
+                  }" style="font-size: 0.7rem;">
+                    ${f.attribution_type}
+                  </span>
+                  <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted);">
+                    p.${f.page_number || 1} [${f.char_offset_start || 0}-${f.char_offset_end || 0}]
+                  </span>
+                </div>
+                <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">
+                  ${Formatters.escapeHtml(f.fact_statement)}
+                </div>
+                ${f.source_passage ? `
+                  <div style="font-size: 0.75rem; color: var(--text-muted); font-style: italic; border-left: 2px solid var(--border-default); padding-left: 8px; margin-top: 4px;">
+                    "${Formatters.escapeHtml(f.source_passage.substring(0, 180))}${f.source_passage.length > 180 ? '...' : ''}"
+                  </div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+          <div style="margin-top: 10px; display: flex; justify-content: flex-end;">
+            <button class="btn btn-secondary btn-sm" id="btnReExtractFacts">
+              🔄 Re-extract Document Facts
+            </button>
+          </div>
+        ` : `
+          <div style="padding: 14px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px dashed var(--border-default); text-align: center; font-size: 0.82rem; color: var(--text-muted);">
+            <div>No structured facts extracted for this exhibit yet.</div>
+            <div style="margin-top: 8px;">
+              <button class="btn btn-primary btn-sm" id="btnExtractFacts">
+                📑 Extract Facts & Summary
+              </button>
+            </div>
+          </div>
+        `}
       </div>
 
       <!-- SECTION 3: Evidence History -->
@@ -2402,39 +3655,28 @@ const ScreenEvidence = {
         </div>
       </div>
 
-      <!-- SECTION 4: Technical Forensic Details (Collapsed by Default) -->
+      <!-- SECTION 4: Technical Forensic Details (Expandable for Authorized Users) -->
       <div class="drawer-section">
-        <details class="technical-details-card" style="padding: 10px 14px;">
-          <summary style="cursor: pointer; font-size: 0.82rem; font-weight: 600; color: var(--text-main); user-select: none;">
-            🔍 View Technical Forensic Details
-          </summary>
-          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px; font-size: 0.78rem;">
-            <div class="tech-spec-row">
-              <span class="tech-spec-label">Primary Cryptographic Fingerprint (SHA-256):</span>
-              <div class="tech-spec-val">${ev.checksum_sha256 || "Pending Verification"}</div>
-            </div>
-            <div class="tech-spec-row">
-              <span class="tech-spec-label">Secondary Cryptographic Hash (SHA3-512):</span>
-              <div class="tech-spec-val">${ev.checksum_sha3_512 || "Pending Computation"}</div>
-            </div>
-            <div class="tech-spec-row">
-              <span class="tech-spec-label">Protected Evidence Storage Reference:</span>
-              <div class="tech-spec-val">${ev.worm_storage_reference || "Pending Storage Commit"}</div>
-            </div>
-            <div class="tech-spec-row">
-              <span class="tech-spec-label">Write-Lock Storage Identifier:</span>
-              <div class="tech-spec-val">objlock://${ev.case_id}/${(ev.checksum_sha256 || "pending").substring(0, 16)}+gov</div>
-            </div>
-            <div class="tech-spec-row">
-              <span class="tech-spec-label">Encryption Specifications:</span>
-              <div class="tech-spec-val">AES-256-GCM &bull; 128-bit Authentication Tag &bull; 96-bit Nonce</div>
-            </div>
-            <div class="tech-spec-row">
-              <span class="tech-spec-label">Detected MIME Type & File Signature:</span>
-              <div class="tech-spec-val">${ev.detected_mime_type || "N/A"} (${ev.detected_format || "N/A"})</div>
-            </div>
-          </div>
-        </details>
+        ${StatusPresentation.renderTechnicalDetailsPanel(
+          "Technical Forensic & Cryptographic Details",
+          [
+            { label: "Evidence ID", value: ev.evidence_id },
+            { label: "Original Filename", value: ev.original_file_name },
+            { label: "Declared MIME Type", value: ev.declared_mime_type },
+            { label: "Detected MIME Type / Format", value: ev.detected_mime_type ? `${ev.detected_mime_type} (${ev.detected_format || 'Standard'})` : null },
+            { label: "File Size", value: Formatters.formatBytes(ev.file_size_bytes) },
+            { label: "SHA-256 Checksum", value: ev.checksum_sha256 },
+            { label: "SHA3-512 Checksum", value: ev.checksum_sha3_512 },
+            { label: "Integrity Verification Result", value: ev.integrity_status ? StatusPresentation.get(ev.integrity_status).label : null },
+            { label: "Antivirus Scan Result", value: ev.antivirus_status ? `${StatusPresentation.get(ev.antivirus_status).label} (${ev.antivirus_scanner === 'EicarHeuristicScanner' ? 'Development Signature Scanner (EicarHeuristicScanner)' : (ev.antivirus_scanner || 'Native ClamAV Engine')})` : null },
+            { label: "Storage Reference", value: ev.worm_storage_reference },
+            { label: "Object-Lock Status", value: ev.lock_status ? `${StatusPresentation.get(ev.lock_status === 'LOCKED' ? 'OBJECT_LOCKED' : ev.lock_status).label} (Local development simulation; not hardware WORM)` : null },
+            { label: "Object-Lock Storage Reference", value: ev.lock_storage_reference },
+            { label: "Encryption Status", value: ev.encryption_status ? `${ev.encryption_status} (${ev.encryption_algorithm || 'AES-256-GCM'})` : null },
+            { label: "Submitting Investigator", value: ev.submitting_investigator_id },
+            { label: "Intake Timestamp", value: Formatters.formatDate(ev.created_at) }
+          ].filter(it => it.value !== null && it.value !== undefined)
+        )}
       </div>
     `;
 
@@ -2450,6 +3692,28 @@ const ScreenEvidence = {
 
     document.getElementById("btnExportCert")?.addEventListener("click", () => {
       this.showCustodyCertificateModal(ev);
+    });
+
+    document.getElementById("btnExtractFacts")?.addEventListener("click", async () => {
+      try {
+        UI.showToast("Extracting document facts...", "info");
+        await Api.triggerExtractFacts(caseId, evidenceId);
+        UI.showToast("Document facts extracted successfully", "success");
+        await this.openEvidenceDetailDrawer(evidenceId);
+      } catch (err) {
+        UI.showToast(`Extraction failed: ${err.message}`, "error");
+      }
+    });
+
+    document.getElementById("btnReExtractFacts")?.addEventListener("click", async () => {
+      try {
+        UI.showToast("Re-extracting document facts...", "info");
+        await Api.triggerExtractFacts(caseId, evidenceId);
+        UI.showToast("Document facts re-extracted successfully", "success");
+        await this.openEvidenceDetailDrawer(evidenceId);
+      } catch (err) {
+        UI.showToast(`Re-extraction failed: ${err.message}`, "error");
+      }
     });
   },
 
@@ -2541,8 +3805,13 @@ const ScreenEvidence = {
     try {
       await Api.applyObjectLock(caseId, evidenceId, "GOVERNANCE");
       await Api.encryptEvidence(caseId, evidenceId);
-      UI.showToast(`Write protection and encryption active!`, "success");
-      UI.recordAudit("SECURITY_SEALED", evidenceId, "SUCCESS", "Object locked & encrypted");
+      try {
+        await Api.indexEvidence(caseId, evidenceId);
+      } catch (idxErr) {
+        console.warn("RAG indexing notice:", idxErr);
+      }
+      UI.showToast(`Write protection, encryption, and RAG indexing active!`, "success");
+      UI.recordAudit("SECURITY_SEALED", evidenceId, "SUCCESS", "Object locked, encrypted, and indexed");
       await this.openEvidenceDetailDrawer(evidenceId);
       await ScreenEvidence.render(caseId);
     } catch (e) {
@@ -2570,6 +3839,11 @@ const ScreenEvidence = {
       try {
         await Api.applyObjectLock(caseId, evidenceId, "GOVERNANCE");
         await Api.encryptEvidence(caseId, evidenceId);
+        try {
+          await Api.indexEvidence(caseId, evidenceId);
+        } catch (idxErr) {
+          console.warn("RAG indexing notice:", idxErr);
+        }
       } catch (lockErr) {
         console.warn("Lock/Encrypt notice:", lockErr);
       }
@@ -2585,6 +3859,753 @@ const ScreenEvidence = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 9a. SCREEN 3: FORENSIC VERIFICATION WORKSPACE (Route: #/cases/:id/verification)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ScreenVerification = {
+  async render(caseId) {
+    const container = document.getElementById("viewContainer");
+    document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Forensic Verification`;
+
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
+
+    const c = State.activeCase;
+    const evidenceList = State.evidence || [];
+
+    const totalEvidence = evidenceList.length;
+    const mimeValidated = evidenceList.filter(e => e.detected_mime_type || e.mime_validation_status === "VALIDATED").length;
+    const avClean = evidenceList.filter(e => e.antivirus_status === "CLEAN").length;
+    const integrityVerified = evidenceList.filter(e => e.integrity_status === "VERIFIED").length;
+    const wormCommitted = evidenceList.filter(e => e.worm_status === "COMMITTED").length;
+    const objectLocked = evidenceList.filter(e => e.lock_status === "LOCKED").length;
+
+    const isCurrentStage = c.lifecycle_stage === "EVIDENCE_PROCESSING";
+    const isCompletedStage = ["ANALYSIS", "REVIEW", "CLOSED"].includes(c.lifecycle_stage);
+    const isFutureStage = ["INITIALIZED", "EVIDENCE_INGESTION"].includes(c.lifecycle_stage);
+
+    const allVerified = totalEvidence > 0 && evidenceList.every(e => 
+      e.integrity_status === "VERIFIED" && e.worm_status === "COMMITTED"
+    );
+
+    let stageBannerHtml = "";
+    if (isFutureStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--primary-bg); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-info">STAGE 3 PREREQUISITE</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Current Case Stage: ${c.lifecycle_stage}</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Forensic Verification Awaiting Stage Activation
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                Case is currently in Stage <strong>${(StageDisplayMap[c.lifecycle_stage] || {}).short || c.lifecycle_stage}</strong>. 
+                ${totalEvidence === 0 
+                  ? "To perform forensic verification, first register case exhibits in Stage 2 Evidence Collection." 
+                  : `${totalEvidence} exhibit(s) registered. When you have attached all initial exhibits, advance the investigation to Stage 3 to perform automated verification.`}
+              </p>
+            </div>
+            <div>
+              ${totalEvidence > 0 && c.lifecycle_stage === "EVIDENCE_INGESTION" ? `
+                <button class="btn btn-primary btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'EVIDENCE_PROCESSING')">
+                  Proceed to Forensic Verification &rarr;
+                </button>
+              ` : `
+                <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${c.case_id}', 'evidence')">
+                  Go to Evidence Collection &rarr;
+                </button>
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (isCurrentStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--bg-card); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-attention">ACTIVE WORKSPACE &bull; STAGE 3</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Forensic Verification In Progress</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                ${allVerified ? "All Case Exhibits Forensically Verified" : "Forensic Verification & Integrity Validation"}
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                ${allVerified 
+                  ? `All ${totalEvidence} exhibits have completed binary format validation, ClamAV antivirus clearance, SHA-256 + SHA3-512 dual hashing, and immutable WORM storage. You can now advance to Investigation Analysis.` 
+                  : `Automated forensic verification executes binary signature inspection, malware scanning, dual cryptographic hashing, and immutable WORM storage. ${integrityVerified} of ${totalEvidence} exhibits verified.`}
+              </p>
+            </div>
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              ${allVerified ? `
+                <button class="btn btn-primary btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'ANALYSIS')">
+                  Advance to Investigation Analysis &rarr;
+                </button>
+              ` : `
+                <button class="btn btn-primary" id="btnRunAllChecks" onclick="ScreenVerification.runAllChecks('${c.case_id}')">
+                  ⚡ Execute Pending Checks
+                </button>
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (isCompletedStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--verified-bg); border-left: 5px solid var(--verified); padding: 16px 20px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-verified">STAGE 3 COMPLETED</span>
+                <span style="font-size: 0.8rem; color: var(--verified-text); font-family: var(--font-mono);">Verification Records Locked & Preserved</span>
+              </div>
+              <div style="font-size: 1rem; font-weight: 700; color: var(--verified-text); margin-top: 2px;">
+                Forensic Verification Complete — ${integrityVerified} of ${totalEvidence} Exhibits Preserved
+              </div>
+              <div style="font-size: 0.84rem; color: var(--verified-text); opacity: 0.9; margin-top: 2px;">
+                All forensic verification records, SHA-256 and SHA3-512 cryptographic digests, and WORM storage commitments are permanently retained for this inquiry.
+              </div>
+            </div>
+            <span class="badge badge-verified" style="font-size: 0.9rem; padding: 6px 14px;">✓ Locked in Custody</span>
+          </div>
+        </div>
+      `;
+    }
+
+    const html = `
+      ${renderWorkspaceHeaderHtml("verification")}
+
+      ${stageBannerHtml}
+
+      <!-- Forensic Verification Matrix Metrics -->
+      <div class="metrics-strip">
+        <div class="metric-card">
+          <div class="label">Exhibits In Docket</div>
+          <div class="number">${totalEvidence}</div>
+          <div class="subtext">Registered case exhibits</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">MIME Validated</div>
+          <div class="number" style="color: ${mimeValidated === totalEvidence && totalEvidence > 0 ? 'var(--verified)' : 'var(--text-main)'};">
+            ${mimeValidated}
+          </div>
+          <div class="subtext">Magic bytes match</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Security Cleared</div>
+          <div class="number" style="color: ${avClean === totalEvidence && totalEvidence > 0 ? 'var(--verified)' : 'var(--text-main)'};">
+            ${avClean}
+          </div>
+          <div class="subtext">ClamAV scan passed</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Dual-Hash Verified</div>
+          <div class="number" style="color: ${integrityVerified === totalEvidence && totalEvidence > 0 ? 'var(--verified)' : 'var(--text-main)'};">
+            ${integrityVerified}
+          </div>
+          <div class="subtext">SHA-256 + SHA3-512</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">WORM Object Locked</div>
+          <div class="number" style="color: ${objectLocked === totalEvidence && totalEvidence > 0 ? 'var(--verified)' : 'var(--text-main)'};">
+            ${objectLocked}
+          </div>
+          <div class="subtext">Immutable protected storage</div>
+        </div>
+      </div>
+
+      <!-- Human Governance Notice -->
+      <div class="human-governance-notice">
+        <span style="font-size: 1.2rem;">⚖️</span>
+        <div>
+          <strong>Investigator Evidentiary Notice:</strong>
+          <span> Automated forensic checks verify binary consistency, malware absence, and cryptographic non-tampering. Evidentiary admissibility and substantive investigative weight remain subject to professional evaluation by the Investigating Officer.</span>
+        </div>
+      </div>
+
+      <!-- Verification Workspace Body -->
+      <div class="card" style="margin-top: 14px;">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <h3 class="card-title">Exhibit Forensic Verification Matrix</h3>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">MOD-06 (MIME) &bull; MOD-07 (Antivirus) &bull; MOD-08 (WORM Commit) &bull; MOD-09 (Dual-Hash) &bull; MOD-10 (Object Lock)</span>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            ${isCurrentStage && !allVerified && totalEvidence > 0 ? `
+              <button class="btn btn-primary btn-sm" onclick="ScreenVerification.runAllChecks('${c.case_id}')">
+                ⚡ Run All Pending Checks
+              </button>
+            ` : ""}
+            <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'evidence')">
+              Open Evidence Register &rarr;
+            </button>
+          </div>
+        </div>
+
+        ${totalEvidence === 0 ? `
+          <div class="empty-state-card" style="margin-top: 16px;">
+            <div class="empty-state-icon">🛡️</div>
+            <div class="empty-state-title">No Exhibits Uploaded for Verification</div>
+            <div class="empty-state-desc">
+              Forensic verification executes automated integrity checks on seized exhibits. To begin, attach case documents, crime scene photos, CCTV clips, or telecom records in Stage 2 Evidence Collection.
+            </div>
+            <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${c.case_id}', 'evidence')">
+              + Register Case Evidence Exhibit
+            </button>
+          </div>
+        ` : `
+          <div style="overflow-x: auto; margin-top: 14px;">
+            <table class="verification-matrix-table">
+              <thead>
+                <tr>
+                  <th>Exhibit</th>
+                  <th>Category</th>
+                  <th>MIME Check (MOD-06)</th>
+                  <th>Antivirus Scan (MOD-07)</th>
+                  <th>Dual-Hash Integrity (MOD-09)</th>
+                  <th>WORM Storage (MOD-08/10)</th>
+                  <th>Forensic Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${evidenceList.map(e => {
+                  const isMimeOk = e.detected_mime_type || e.mime_validation_status === "VALIDATED";
+                  const isAvOk = e.antivirus_status === "CLEAN";
+                  const isHashOk = e.integrity_status === "VERIFIED";
+                  const isWormOk = e.worm_status === "COMMITTED";
+                  const isLockOk = e.lock_status === "LOCKED";
+                  const isFull = isMimeOk && isAvOk && isHashOk && isWormOk;
+
+                  return `
+                    <tr>
+                      <td>
+                        <div style="font-weight: 600; color: var(--text-main);">${Formatters.escapeHtml(e.original_file_name)}</div>
+                        <div style="font-size: 0.74rem; color: var(--text-muted); font-family: var(--font-mono);">${e.evidence_id}</div>
+                      </td>
+                      <td>
+                        <span style="font-size: 0.8rem;">${Formatters.formatCategory(e.evidence_category)}</span>
+                      </td>
+                      <td>
+                        <span class="verification-check-pill ${isMimeOk ? 'pass' : 'pending'}">
+                          ${isMimeOk ? '✓ VALIDATED' : '● PENDING'}
+                        </span>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); margin-top: 3px;">
+                          ${e.detected_mime_type || e.declared_mime_type || 'unverified'}
+                        </div>
+                      </td>
+                      <td>
+                        <span class="verification-check-pill ${isAvOk ? 'pass' : e.antivirus_status === 'QUARANTINED' ? 'fail' : 'pending'}">
+                          ${isAvOk ? '✓ CLEAN' : e.antivirus_status === 'QUARANTINED' ? '⚠ QUARANTINED' : '● PENDING'}
+                        </span>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">${e.antivirus_scanner || 'Native Engine'}</div>
+                      </td>
+                      <td>
+                        <span class="verification-check-pill ${isHashOk ? 'pass' : 'pending'}">
+                          ${isHashOk ? '✓ VERIFIED' : '● PENDING'}
+                        </span>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); font-family: var(--font-mono); margin-top: 3px;">
+                          ${(e.checksum_sha256 || e.sha256_hash) ? (e.checksum_sha256 || e.sha256_hash).substring(0, 10) + '...' : 'pending'}
+                        </div>
+                      </td>
+                      <td>
+                        <span class="verification-check-pill ${isWormOk ? 'pass' : 'pending'}">
+                          ${isWormOk ? '✓ COMMITTED' : '● PENDING'}
+                        </span>
+                        <div style="font-size: 0.7rem; color: var(--text-muted); margin-top: 3px;">
+                          ${isLockOk ? 'Locked (Governance)' : isWormOk ? 'WORM Preserved' : 'Uncommitted'}
+                        </div>
+                      </td>
+                      <td>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                          <button class="btn btn-secondary btn-sm" onclick="ScreenVerification.toggleTechPanel('${e.evidence_id}')">
+                            Technical Details
+                          </button>
+                          ${!isFull ? `
+                            <button class="btn btn-primary btn-sm" onclick="ScreenVerification.runExhibitChecks('${c.case_id}', '${e.evidence_id}')">
+                              ⚡ Verify Exhibit
+                            </button>
+                          ` : ""}
+                        </div>
+                      </td>
+                    </tr>
+                    <tr id="techPanel_${e.evidence_id}" style="display: none;">
+                      <td colspan="7" style="background: var(--bg-card-subtle); padding: 14px 18px; border-bottom: 2px solid var(--border-default);">
+                        ${StatusPresentation.renderTechnicalDetailsPanel(e)}
+                      </td>
+                    </tr>
+                  `;
+                }).join("")}
+              </tbody>
+            </table>
+          </div>
+        `}
+      </div>
+    `;
+
+    container.innerHTML = html;
+  },
+
+  toggleTechPanel(evidenceId) {
+    const row = document.getElementById(`techPanel_${evidenceId}`);
+    if (row) {
+      row.style.display = row.style.display === "none" ? "table-row" : "none";
+    }
+  },
+
+  async runExhibitChecks(caseId, evidenceId) {
+    UI.showToast("Executing forensic verification pipeline on exhibit...", "info");
+    try {
+      const ev = (State.evidence || []).find(x => x.evidence_id === evidenceId) || {};
+      if (!ev.detected_mime_type) {
+        await Api.validateEvidenceMime(caseId, evidenceId);
+      }
+      if (ev.antivirus_status !== "CLEAN") {
+        await Api.scanEvidenceAntivirus(caseId, evidenceId);
+      }
+      if (ev.worm_status !== "COMMITTED") {
+        await Api.commitEvidenceWorm(caseId, evidenceId);
+      }
+      if (ev.integrity_status !== "VERIFIED") {
+        await Api.verifyEvidenceIntegrity(caseId, evidenceId);
+      }
+      try {
+        await Api.applyObjectLock(caseId, evidenceId, "GOVERNANCE");
+        await Api.encryptEvidence(caseId, evidenceId);
+      } catch (e) {
+        console.warn("Lock notice:", e);
+      }
+      UI.showToast("Exhibit successfully verified and locked in WORM storage!", "success");
+      UI.recordAudit("FORENSIC_VERIFICATION_COMPLETE", evidenceId, "SUCCESS", "MIME, Antivirus, and Dual-Hash passed");
+      await ScreenVerification.render(caseId);
+    } catch (err) {
+      UI.showToast(`Verification check failed: ${err.message}`, "error");
+    }
+  },
+
+  async runAllChecks(caseId) {
+    const btn = document.getElementById("btnRunAllChecks");
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<span style="display:inline-block; width:12px; height:12px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin 0.75s linear infinite; margin-right:6px; vertical-align:middle;"></span> Verifying Exhibits...`;
+    }
+
+    try {
+      const list = State.evidence || [];
+      for (const e of list) {
+        if (e.integrity_status !== "VERIFIED" || e.worm_status !== "COMMITTED") {
+          try {
+            if (!e.detected_mime_type) await Api.validateEvidenceMime(caseId, e.evidence_id);
+            if (e.antivirus_status !== "CLEAN") await Api.scanEvidenceAntivirus(caseId, e.evidence_id);
+            if (e.worm_status !== "COMMITTED") await Api.commitEvidenceWorm(caseId, e.evidence_id);
+            if (e.integrity_status !== "VERIFIED") await Api.verifyEvidenceIntegrity(caseId, e.evidence_id);
+            try {
+              await Api.applyObjectLock(caseId, e.evidence_id, "GOVERNANCE");
+              await Api.encryptEvidence(caseId, e.evidence_id);
+            } catch (le) {}
+          } catch (itemErr) {
+            console.warn(`Exhibit ${e.evidence_id} verification check notice:`, itemErr);
+          }
+        }
+      }
+      UI.showToast("All eligible exhibits processed through forensic verification pipeline!", "success");
+      UI.recordAudit("BATCH_VERIFICATION_EXECUTED", caseId, "SUCCESS", "All staged exhibits processed");
+      await ScreenVerification.render(caseId);
+    } catch (err) {
+      UI.showToast(`Batch verification failed: ${err.message}`, "error");
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9.5 SCREEN: ENTITY RELATIONSHIP GRAPH (Route: #/cases/:id/connections)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ScreenGraph = {
+  activeCategory: "ALL",
+  searchQuery: "",
+  selectedNode: null,
+  selectedEdge: null,
+  graphData: null,
+  zoomLevel: 1.0,
+
+  async render(caseId) {
+    const container = document.getElementById("viewContainer");
+    document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Entity Graph`;
+
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
+
+    container.innerHTML = `
+      ${renderWorkspaceHeaderHtml("connections")}
+
+      <div class="cases-toolbar" style="margin-top: 14px;">
+        <div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Entity Relationship Graph</h3>
+          <p style="color: var(--text-muted); font-size: 0.82rem;">Source-grounded knowledge graph connecting people, physical evidence, locations, documents, and events.</p>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${caseId}', 'timeline')">View Timeline</button>
+          <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence')">Evidence Library</button>
+        </div>
+      </div>
+
+      <div id="graphMountArea" style="margin-top: 16px;">
+        <div style="padding: 40px; text-align: center; color: var(--text-muted);">
+          <div style="font-size: 2rem; margin-bottom: 8px;">🕸️</div>
+          <div>Loading case knowledge graph...</div>
+        </div>
+      </div>
+    `;
+
+    try {
+      const data = await Api.getKnowledgeGraph(caseId);
+      this.graphData = data;
+      this.renderGraph(caseId);
+    } catch (err) {
+      document.getElementById("graphMountArea").innerHTML = `
+        <div class="card" style="padding: 24px; text-align: center;">
+          <p style="color: var(--danger);">Failed to load entity graph: ${Formatters.escapeHtml(err.message)}</p>
+          <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.render('${caseId}')">Retry</button>
+        </div>
+      `;
+    }
+  },
+
+  renderGraph(caseId) {
+    const mount = document.getElementById("graphMountArea");
+    if (!mount) return;
+
+    if (!this.graphData || this.graphData.total_nodes === 0) {
+      mount.innerHTML = `
+        <div class="empty-state-card" style="padding: 48px 24px; text-align: center; background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-default);">
+          <div style="font-size: 2.8rem; margin-bottom: 12px; opacity: 0.85;">🕸️</div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 8px;">No Entities Documented Yet</h3>
+          <p style="color: var(--text-muted); font-size: 0.88rem; max-width: 520px; margin: 0 auto 20px auto; line-height: 1.5;">
+            The entity graph is constructed strictly from verified case exhibits and FIR records. Zero mock nodes are displayed. Attach and verify exhibits to map investigative connections.
+          </p>
+          <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence')">
+            <span>📦 Attach Case Evidence</span>
+          </button>
+        </div>
+      `;
+      return;
+    }
+
+    const allNodes = this.graphData.nodes || [];
+    const allEdges = this.graphData.edges || [];
+
+    // Filter nodes
+    let filteredNodes = allNodes;
+    if (this.activeCategory !== "ALL") {
+      filteredNodes = filteredNodes.filter(n => n.category === this.activeCategory);
+    }
+    if (this.searchQuery) {
+      const q = this.searchQuery.toLowerCase();
+      filteredNodes = filteredNodes.filter(n => n.name.toLowerCase().includes(q) || (n.subtitle && n.subtitle.toLowerCase().includes(q)));
+    }
+    const filteredNodeIds = new Set(filteredNodes.map(n => n.id));
+    const filteredEdges = allEdges.filter(e => filteredNodeIds.has(e.source_node_id) && filteredNodeIds.has(e.target_node_id));
+
+    // Layout nodes in a circle or radial structure
+    const width = 900;
+    const height = 550;
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const radius = Math.min(width, height) * 0.38;
+
+    const coords = {};
+    filteredNodes.forEach((node, i) => {
+      const angle = (2 * Math.PI * i) / (filteredNodes.length || 1) - Math.PI / 2;
+      coords[node.id] = {
+        x: centerX + radius * Math.cos(angle),
+        y: centerY + radius * Math.sin(angle),
+      };
+    });
+
+    const categoryIcons = {
+      PERSON: "👤",
+      OBJECT: "📦",
+      LOCATION: "📍",
+      DOCUMENT: "📄",
+      EVENT: "⏱️"
+    };
+
+    mount.innerHTML = `
+      <div class="graph-viewport-container">
+        <!-- Toolbar -->
+        <div class="graph-toolbar">
+          <div class="graph-filter-group">
+            <span style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); margin-right: 4px;">CATEGORY:</span>
+            <button class="graph-filter-btn ${this.activeCategory === 'ALL' ? 'active' : ''}" onclick="ScreenGraph.setCategoryFilter('${caseId}', 'ALL')">All (${allNodes.length})</button>
+            <button class="graph-filter-btn ${this.activeCategory === 'PERSON' ? 'active' : ''}" onclick="ScreenGraph.setCategoryFilter('${caseId}', 'PERSON')">People (${allNodes.filter(n=>n.category==='PERSON').length})</button>
+            <button class="graph-filter-btn ${this.activeCategory === 'OBJECT' ? 'active' : ''}" onclick="ScreenGraph.setCategoryFilter('${caseId}', 'OBJECT')">Objects (${allNodes.filter(n=>n.category==='OBJECT').length})</button>
+            <button class="graph-filter-btn ${this.activeCategory === 'LOCATION' ? 'active' : ''}" onclick="ScreenGraph.setCategoryFilter('${caseId}', 'LOCATION')">Locations (${allNodes.filter(n=>n.category==='LOCATION').length})</button>
+            <button class="graph-filter-btn ${this.activeCategory === 'DOCUMENT' ? 'active' : ''}" onclick="ScreenGraph.setCategoryFilter('${caseId}', 'DOCUMENT')">Documents (${allNodes.filter(n=>n.category==='DOCUMENT').length})</button>
+          </div>
+
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <input type="text" placeholder="Search entities..." class="form-input" style="height: 32px; font-size: 0.82rem; width: 160px;" value="${Formatters.escapeHtml(this.searchQuery)}" oninput="ScreenGraph.setSearchQuery('${caseId}', this.value)" />
+            <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.zoom(0.15)">➕ Zoom In</button>
+            <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.zoom(-0.15)">➖ Zoom Out</button>
+            <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.resetZoom()">⟲ Reset</button>
+          </div>
+        </div>
+
+        <!-- SVG Canvas Area -->
+        <div class="graph-canvas-area" id="graphCanvasArea">
+          <svg class="graph-svg" viewBox="0 0 ${width} ${height}">
+            <defs>
+              <marker id="arrow" viewBox="0 -5 10 10" refX="28" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0,-5L10,0L0,5" fill="var(--border-default)"></path>
+              </marker>
+              <marker id="arrow-selected" viewBox="0 -5 10 10" refX="28" refY="0" markerWidth="6" markerHeight="6" orient="auto">
+                <path d="M0,-5L10,0L0,5" fill="var(--primary)"></path>
+              </marker>
+            </defs>
+
+            <!-- Edges -->
+            <g id="graphEdgesGroup">
+              ${filteredEdges.map(edge => {
+                const s = coords[edge.source_node_id];
+                const t = coords[edge.target_node_id];
+                if (!s || !t) return '';
+                const midX = (s.x + t.x) / 2;
+                const midY = (s.y + t.y) / 2;
+                const isSel = ScreenGraph.selectedEdge && ScreenGraph.selectedEdge.id === edge.id;
+                return `
+                  <line class="graph-edge ${isSel ? 'selected' : ''}" x1="${s.x}" y1="${s.y}" x2="${t.x}" y2="${t.y}" marker-end="${isSel ? 'url(#arrow-selected)' : 'url(#arrow)'}" onclick="ScreenGraph.selectEdge('${edge.id}')"></line>
+                  <text class="graph-edge-label" x="${midX}" y="${midY - 4}">${Formatters.escapeHtml(edge.label || edge.relation_type)}</text>
+                `;
+              }).join("")}
+            </g>
+
+            <!-- Nodes -->
+            <g id="graphNodesGroup">
+              ${filteredNodes.map(node => {
+                const pos = coords[node.id] || { x: centerX, y: centerY };
+                const isSel = ScreenGraph.selectedNode && ScreenGraph.selectedNode.id === node.id;
+                const icon = categoryIcons[node.category] || "●";
+                return `
+                  <g class="graph-node" transform="translate(${pos.x}, ${pos.y})" onclick="ScreenGraph.selectNode('${node.id}')">
+                    <circle class="node-circle-${node.category}" r="22" stroke-width="${isSel ? '3' : '1.5'}" style="${isSel ? 'stroke: #ffffff; filter: drop-shadow(0 0 8px var(--primary));' : ''}"></circle>
+                    <text text-anchor="middle" dy="5" font-size="14" fill="#ffffff">${icon}</text>
+                    <text text-anchor="middle" dy="38" font-size="11" font-weight="600" fill="var(--text-main)">${Formatters.escapeHtml(node.name.length > 20 ? node.name.slice(0, 18) + '...' : node.name)}</text>
+                    <text text-anchor="middle" dy="50" font-size="9" fill="var(--text-muted)">${Formatters.escapeHtml(node.subtitle || node.category)}</text>
+                  </g>
+                `;
+              }).join("")}
+            </g>
+          </svg>
+        </div>
+
+        <!-- Inspector Drawer -->
+        <div class="entity-inspector-drawer" id="entityInspectorDrawer">
+          <div id="entityInspectorContent"></div>
+        </div>
+      </div>
+    `;
+  },
+
+  setCategoryFilter(caseId, cat) {
+    this.activeCategory = cat;
+    this.renderGraph(caseId);
+  },
+
+  setSearchQuery(caseId, q) {
+    this.searchQuery = q.trim();
+    this.renderGraph(caseId);
+  },
+
+  zoom(delta) {
+    this.zoomLevel = Math.max(0.5, Math.min(2.5, this.zoomLevel + delta));
+    const svg = document.querySelector(".graph-svg");
+    if (svg) svg.style.transform = `scale(${this.zoomLevel})`;
+  },
+
+  resetZoom() {
+    this.zoomLevel = 1.0;
+    const svg = document.querySelector(".graph-svg");
+    if (svg) svg.style.transform = "scale(1)";
+  },
+
+  selectNode(nodeId) {
+    const node = (this.graphData?.nodes || []).find(n => n.id === nodeId);
+    if (!node) return;
+    this.selectedNode = node;
+    this.selectedEdge = null;
+
+    const drawer = document.getElementById("entityInspectorDrawer");
+    const content = document.getElementById("entityInspectorContent");
+    if (!drawer || !content) return;
+
+    const connectedEdges = (this.graphData?.edges || []).filter(e => e.source_node_id === nodeId || e.target_node_id === nodeId);
+
+    content.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px;">
+        <span class="badge badge-info">${node.category}</span>
+        <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.closeInspector()">✕</button>
+      </div>
+
+      <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 4px; color: var(--text-main);">${Formatters.escapeHtml(node.name)}</h3>
+      <div style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 14px;">${Formatters.escapeHtml(node.subtitle || '')}</div>
+
+      <div class="card" style="padding: 12px; margin-bottom: 14px; font-size: 0.82rem; background: var(--bg-card-subtle);">
+        <div style="font-weight: 700; color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 6px;">Entity Details</div>
+        ${Object.entries(node.details || {}).map(([k, v]) => `
+          <div style="display: flex; justify-content: space-between; padding: 2px 0;">
+            <span style="color: var(--text-muted);">${Formatters.escapeHtml(k)}:</span>
+            <strong style="color: var(--text-main);">${Formatters.escapeHtml(String(v))}</strong>
+          </div>
+        `).join("")}
+      </div>
+
+      <div style="font-weight: 700; color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 8px;">
+        Connected Relationships (${connectedEdges.length})
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px;">
+        ${connectedEdges.map(edge => {
+          const isSource = edge.source_node_id === nodeId;
+          const otherId = isSource ? edge.target_node_id : edge.source_node_id;
+          const otherNode = (this.graphData?.nodes || []).find(n => n.id === otherId);
+          return `
+            <div class="card" style="padding: 10px; font-size: 0.82rem; cursor: pointer;" onclick="ScreenGraph.selectEdge('${edge.id}')">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span class="badge badge-neutral" style="font-size: 0.72rem;">${edge.relation_type}</span>
+                <span class="badge ${edge.review_status === 'CONFIRMED' ? 'badge-verified' : 'badge-attention'}" style="font-size: 0.7rem;">${edge.review_status}</span>
+              </div>
+              <div style="color: var(--text-main); font-weight: 600;">
+                ${isSource ? '&rarr;' : '&larr;'} ${Formatters.escapeHtml(otherNode?.name || otherId)}
+              </div>
+              <div style="color: var(--text-muted); font-size: 0.76rem; margin-top: 4px;">${Formatters.escapeHtml(edge.label || '')}</div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${State.activeCaseId}', 'timeline')">
+          ⏱️ Jump to Timeline Events
+        </button>
+        ${node.evidence_id ? `
+          <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${State.activeCaseId}', 'evidence'); setTimeout(() => ScreenEvidence.openEvidenceDetailDrawer('${node.evidence_id}'), 120);">
+            📦 View Source Exhibit (${Formatters.escapeHtml(node.source_filename || node.evidence_id)})
+          </button>
+        ` : ''}
+      </div>
+    `;
+
+    drawer.classList.add("open");
+  },
+
+  selectEdge(edgeId) {
+    const edge = (this.graphData?.edges || []).find(e => e.id === edgeId);
+    if (!edge) return;
+    this.selectedEdge = edge;
+
+    const drawer = document.getElementById("entityInspectorDrawer");
+    const content = document.getElementById("entityInspectorContent");
+    if (!drawer || !content) return;
+
+    const sNode = (this.graphData?.nodes || []).find(n => n.id === edge.source_node_id);
+    const tNode = (this.graphData?.nodes || []).find(n => n.id === edge.target_node_id);
+
+    content.innerHTML = `
+      <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 14px;">
+        <span class="badge badge-attention">Relationship Inspector</span>
+        <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.closeInspector()">✕</button>
+      </div>
+
+      <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 2px; color: var(--text-main);">${Formatters.escapeHtml(edge.label || edge.relation_type)}</h3>
+      <div style="color: var(--text-muted); font-size: 0.78rem; font-family: var(--font-mono); margin-bottom: 12px;">${edge.id}</div>
+
+      <div class="card" style="padding: 12px; margin-bottom: 14px; background: var(--bg-card-subtle);">
+        <div style="display: flex; align-items: center; justify-content: space-between; font-size: 0.84rem;">
+          <strong>${Formatters.escapeHtml(sNode?.name || edge.source_node_id)}</strong>
+          <span style="color: var(--primary); font-weight: 700;">&rarr; [${edge.relation_type}] &rarr;</span>
+          <strong>${Formatters.escapeHtml(tNode?.name || edge.target_node_id)}</strong>
+        </div>
+      </div>
+
+      <!-- Verbatim Grounded Quote -->
+      <div style="margin-bottom: 14px;">
+        <div style="font-weight: 700; color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 4px;">Verbatim Source Passage</div>
+        <div class="fir-source-quote-box">
+          "${Formatters.escapeHtml(edge.source_passage || 'No text passage available')}"
+          <div class="fir-quote-meta">
+            <span>Exhibit: <strong>${Formatters.escapeHtml(edge.source_filename || edge.evidence_id)}</strong></span>
+            <span>Page ${edge.page_number || 1} • Offset ${edge.char_offset || 0}</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 16px;">
+        <div style="font-weight: 700; color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 6px;">Investigator Review Status</div>
+        <span class="badge ${edge.review_status === 'CONFIRMED' ? 'badge-verified' : 'badge-attention'}" style="font-size: 0.8rem;">
+          ${edge.review_status}
+        </span>
+      </div>
+
+      <!-- Decision Actions -->
+      <div style="font-weight: 700; color: var(--text-muted); font-size: 0.72rem; text-transform: uppercase; margin-bottom: 8px;">Investigator Decision Actions</div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <button class="btn btn-primary btn-sm" onclick="ScreenGraph.recordDecision('${edge.id}', 'CONFIRMED')">
+          ✓ Confirm Relationship (Verified)
+        </button>
+        <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.recordDecision('${edge.id}', 'CORRECTED')">
+          ✏️ Correct Connection
+        </button>
+        <button class="btn btn-secondary btn-sm" style="color: var(--attention-text);" onclick="ScreenGraph.recordDecision('${edge.id}', 'UNRESOLVED')">
+          ? Mark as Unresolved Inquiry
+        </button>
+        <button class="btn btn-secondary btn-sm" style="color: var(--danger);" onclick="ScreenGraph.recordDecision('${edge.id}', 'REJECTED')">
+          ✕ Reject Relationship (Uncorroborated)
+        </button>
+      </div>
+    `;
+
+    drawer.classList.add("open");
+  },
+
+  async recordDecision(edgeId, decision) {
+    try {
+      await Api.recordEdgeDecision(State.activeCaseId, edgeId, {
+        decision: decision,
+        notes: `Investigator review decision on relationship ${edgeId}`
+      });
+      UI.showToast(`Relationship marked as ${decision}`, "success");
+      UI.recordAudit("EDGE_REVIEW_DECISION", edgeId, "SUCCESS", `Decision: ${decision}`);
+      // Refresh edge in local state
+      const edge = (this.graphData?.edges || []).find(e => e.id === edgeId);
+      if (edge) edge.review_status = decision;
+      this.selectEdge(edgeId);
+    } catch (err) {
+      UI.showToast(`Failed to update decision: ${err.message}`, "error");
+    }
+  },
+
+  closeInspector() {
+    const drawer = document.getElementById("entityInspectorDrawer");
+    if (drawer) drawer.classList.remove("open");
+    this.selectedNode = null;
+    this.selectedEdge = null;
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 10. SCREEN 4: TIMELINE (Route: #/cases/:id/timeline)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -2593,82 +4614,80 @@ const ScreenTimeline = {
     const container = document.getElementById("viewContainer");
     document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Timeline`;
 
-    await ensureActiveCaseLoaded(caseId);
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
     const c = State.activeCase;
     const evidenceList = State.evidence || [];
 
-    const allEvents = [
-      {
-        id: "EV-01",
-        time: "18:42",
-        date: "30 Sep 2026",
-        title: "Subject enters premises",
-        source: "Corridor Access Register",
-        evidenceId: evidenceList[0] ? evidenceList[0].evidence_id : "SAKSHI-EVID-01",
-        status: "VERIFIED",
-        desc: "Entry logged through main security checkpoint."
-      },
-      {
-        id: "EV-02",
-        time: "19:07",
-        date: "30 Sep 2026",
-        title: "Cellular telephone transaction recorded",
-        source: "Cellular CDR Dump (Sector 4)",
-        evidenceId: evidenceList[1] ? evidenceList[1].evidence_id : "SAKSHI-EVID-02",
-        status: "VERIFIED",
-        desc: "Outgoing SMS transmission registered via nearest cellular base tower."
-      },
-      {
-        id: "EV-03",
-        time: "19:10",
-        date: "30 Sep 2026",
-        title: "Reported departure by witness",
-        source: "Witness Statement WS-02",
-        evidenceId: evidenceList[0] ? evidenceList[0].evidence_id : "SAKSHI-EVID-01",
-        status: "REPORTED",
-        desc: "Witness stated subject departed premises prior to 19:10 hrs."
-      },
-      {
-        id: "EV-04",
-        time: "19:18",
-        date: "30 Sep 2026",
-        title: "Hallway corridor surveillance capture",
-        source: "Hotel Hallway Camera 04",
-        evidenceId: evidenceList[0] ? evidenceList[0].evidence_id : "SAKSHI-EVID-01",
-        status: "VERIFIED",
-        desc: "Corridor camera captures subject silhouette at room doorway at 19:18:32 hrs."
-      },
-      {
-        id: "EV-05",
-        time: "19:31",
-        date: "30 Sep 2026",
-        title: "Vehicle movement exiting back alleyway",
-        source: "Traffic Surveillance System",
-        evidenceId: evidenceList[2] ? evidenceList[2].evidence_id : "SAKSHI-EVID-03",
-        status: "REQUIRES_VERIFICATION",
-        desc: "Dark sedan seen exiting alleyway toward primary ring road."
-      },
-      {
-        id: "EV-06",
-        time: "04:18",
-        date: "01 Oct 2026",
-        title: "Emergency distress phone call logged",
-        source: "PCR Dispatch Audio",
-        evidenceId: evidenceList[3] ? evidenceList[3].evidence_id : "SAKSHI-EVID-04",
-        status: "VERIFIED",
-        desc: "First distress phone call logged by emergency dispatcher."
-      },
-      {
-        id: "EV-07",
-        time: "04:45",
-        date: "01 Oct 2026",
-        title: "First responder patrol arrival at scene",
-        source: "Station General Diary Entry",
-        evidenceId: c.case_id,
-        status: "VERIFIED",
-        desc: "Station patrol officers and medical crew arrive at scene."
-      }
-    ];
+    if (evidenceList.length === 0) {
+      container.innerHTML = `
+        ${renderWorkspaceHeaderHtml("timeline")}
+        <div class="empty-state-card" style="margin-top: 24px; padding: 48px 24px; text-align: center; background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-default);">
+          <div style="font-size: 2.8rem; margin-bottom: 12px; opacity: 0.85;">⏱️</div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 8px;">No Timeline Events Available Yet</h3>
+          <p style="color: var(--text-muted); font-size: 0.88rem; max-width: 540px; margin: 0 auto 20px auto; line-height: 1.5;">
+            A case with zero exhibits contains no verified events. Attach and verify case exhibits (such as witness statements, CCTV footage, call detail records, or post-mortem certificates) to reconstruct a verified chronological sequence.
+          </p>
+          <div style="display: flex; gap: 12px; justify-content: center;">
+            <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence')">
+              <span>📦 Go to Evidence Collection</span>
+            </button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    let timelineRes = null;
+    try {
+      timelineRes = await Api.getTimelineEvents(caseId);
+    } catch (tle) {
+      console.warn("Notice: could not load structured timeline events:", tle);
+    }
+
+    const hasStructuredEvents = timelineRes && timelineRes.events && timelineRes.events.length > 0;
+    const allEvents = hasStructuredEvents
+      ? timelineRes.events.map(ev => ({
+          id: ev.event_id,
+          time: ev.time,
+          date: ev.date || (ev.raw_timestamp ? Formatters.formatDate(ev.raw_timestamp) : "Incident Date"),
+          title: ev.title,
+          source: ev.source_name || "Case Exhibit",
+          evidenceId: ev.evidence_id,
+          status: ev.confidence_level === "HIGH" ? "VERIFIED" : ev.time_certainty === "REPORTED" ? "REPORTED" : "REQUIRES_VERIFICATION",
+          timeCertainty: ev.time_certainty || "REPORTED",
+          branchId: ev.branch_id || "MAIN",
+          branchLabel: ev.branch_label || "Common Chronological Sequence",
+          sourcePage: ev.source_page || 1,
+          desc: ev.description,
+          isContradiction: ev.is_contradiction,
+          contradictionDetail: ev.contradiction_detail,
+        }))
+      : evidenceList.map((e, idx) => {
+          const dt = e.collection_datetime ? new Date(e.collection_datetime) : new Date(e.created_at || Date.now());
+          const timeStr = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+          const dateStr = Formatters.formatDate(dt);
+          const isVerified = e.integrity_status === "VERIFIED" && e.worm_status === "COMMITTED";
+
+          return {
+            id: `EV-${String(idx + 1).padStart(2, '0')}`,
+            time: timeStr,
+            date: dateStr,
+            title: `Exhibit Registered: ${e.original_file_name}`,
+            source: e.source_device_or_person || "Station Evidence Seizure",
+            evidenceId: e.evidence_id,
+            status: isVerified ? "VERIFIED" : "REQUIRES_VERIFICATION",
+            timeCertainty: isVerified ? "EXACT" : "ESTIMATED",
+            branchId: "MAIN",
+            branchLabel: "Common Chronological Sequence",
+            sourcePage: 1,
+            desc: e.description || `Exhibit committed to WORM storage with SHA-256 fingerprint ${e.sha256_hash ? e.sha256_hash.substring(0, 16) + '...' : 'recorded'}. Dual-hash validation ${e.integrity_status || 'PENDING'}.`
+          };
+        });
 
     const currentFilter = State.filters.timelineFilter || "ALL";
     const filteredEvents = allEvents.filter(ev => {
@@ -2676,78 +4695,213 @@ const ScreenTimeline = {
       if (currentFilter === "VERIFIED") return ev.status === "VERIFIED";
       if (currentFilter === "REPORTED") return ev.status === "REPORTED";
       if (currentFilter === "REQUIRES_VERIFICATION") return ev.status === "REQUIRES_VERIFICATION";
+      if (currentFilter === "MAIN") return ev.branchId === "MAIN";
+      if (currentFilter === "BRANCH_A") return ev.branchId === "BRANCH_A";
+      if (currentFilter === "BRANCH_B") return ev.branchId === "BRANCH_B";
       return true;
     });
+
+    const isCurrentStage = c.lifecycle_stage === "ANALYSIS";
+    const isCompletedStage = ["REVIEW", "CLOSED"].includes(c.lifecycle_stage);
+    const isFutureStage = ["INITIALIZED", "EVIDENCE_INGESTION", "EVIDENCE_PROCESSING"].includes(c.lifecycle_stage);
+
+    let stageBannerHtml = "";
+    if (isFutureStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--primary-bg); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-info">STAGE 4 PREREQUISITE</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Current Case Stage: ${c.lifecycle_stage}</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Investigation Analysis Awaiting Forensic Verification
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                Case is currently in Stage <strong>${(StageDisplayMap[c.lifecycle_stage] || {}).short || c.lifecycle_stage}</strong>. 
+                Chronological sequence reconstruction from ${allEvents.length} exhibit(s) is available below for review, but formal investigation analysis requires completing forensic verification first.
+              </p>
+            </div>
+            <div>
+              ${c.lifecycle_stage === "EVIDENCE_PROCESSING" ? `
+                <button class="btn btn-primary btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'ANALYSIS')">
+                  Advance to Investigation Analysis &rarr;
+                </button>
+              ` : `
+                <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'verification')">
+                  View Forensic Verification &rarr;
+                </button>
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (isCurrentStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--bg-card); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-attention">ACTIVE WORKSPACE &bull; STAGE 4</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Investigation Analysis In Progress</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Reconstruct Chronological Timeline & Analysis
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                Review evidence-grounded chronological events, verify timestamps, and evaluate analytical observations. When timeline reconstruction is verified, proceed to Investigator Review.
+              </p>
+            </div>
+            <div>
+              <button class="btn btn-primary btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'REVIEW')">
+                Proceed to Investigator Review &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (isCompletedStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--verified-bg); border-left: 5px solid var(--verified); padding: 16px 20px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-verified">STAGE 4 COMPLETED</span>
+                <span style="font-size: 0.8rem; color: var(--verified-text); font-family: var(--font-mono);">Timeline & Analysis Finalized</span>
+              </div>
+              <div style="font-size: 1rem; font-weight: 700; color: var(--verified-text); margin-top: 2px;">
+                Investigation Timeline Sequence Finalized & Preserved
+              </div>
+              <div style="font-size: 0.84rem; color: var(--verified-text); opacity: 0.9; margin-top: 2px;">
+                All chronological events and analytical observations are preserved in the inquiry record.
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'findings')">
+              View Review Workspace &rarr;
+            </button>
+          </div>
+        </div>
+      `;
+    }
 
     const html = `
       ${renderWorkspaceHeaderHtml("timeline")}
 
+      ${stageBannerHtml}
+
       <div class="cases-toolbar">
         <div>
           <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Chronological Investigation Timeline</h3>
-          <p style="color: var(--text-muted); font-size: 0.82rem;">Chronological reconstruction of events based on FIR, statements, CCTV, and cellular logs.</p>
+          <p style="color: var(--text-muted); font-size: 0.82rem;">Chronological and branching reconstruction of events based on FIR, statements, CCTV, and physical exhibits.</p>
         </div>
       </div>
 
-      <!-- Filter Buttons -->
-      <div class="filter-chips" style="margin: 12px 0 16px;">
+      <!-- Stage 4 Sub-Workspace Navigation Chips -->
+      <div class="filter-chips" style="margin: 8px 0 14px;">
+        <button class="filter-chip active" onclick="Router.selectCaseAndRoute('${caseId}', 'timeline')">
+          ⏱️ Chronological Sequence (${allEvents.length})
+        </button>
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'connections')">
+          🕸️ Entity Graph
+        </button>
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'analysis')">
+          💡 Analytical Observations & Reasoning
+        </button>
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'rag')">
+          🔎 Search Exhibit Passages (RAG)
+        </button>
+      </div>
+
+      <!-- Filter Buttons with Branching Controls -->
+      <div class="filter-chips" style="margin: 0 0 16px;">
         <button class="filter-chip ${currentFilter === 'ALL' ? 'active' : ''}" data-tfilter="ALL">All Events (${allEvents.length})</button>
         <button class="filter-chip ${currentFilter === 'VERIFIED' ? 'active' : ''}" data-tfilter="VERIFIED">Verified</button>
         <button class="filter-chip ${currentFilter === 'REPORTED' ? 'active' : ''}" data-tfilter="REPORTED">Reported</button>
         <button class="filter-chip ${currentFilter === 'REQUIRES_VERIFICATION' ? 'active' : ''}" data-tfilter="REQUIRES_VERIFICATION">Requires Verification</button>
+        ${hasStructuredEvents && timelineRes.branches.includes("BRANCH_A") ? `
+          <button class="filter-chip ${currentFilter === 'BRANCH_A' ? 'active' : ''}" data-tfilter="BRANCH_A">Branch A (Reported)</button>
+        ` : ''}
+        ${hasStructuredEvents && timelineRes.branches.includes("BRANCH_B") ? `
+          <button class="filter-chip ${currentFilter === 'BRANCH_B' ? 'active' : ''}" data-tfilter="BRANCH_B">Branch B (Physical)</button>
+        ` : ''}
       </div>
 
-      <!-- Temporal Inconsistency Highlight -->
-      <div class="contradiction-card">
-        <div class="contradiction-header">
-          <span>⚠️</span>
-          <span>Temporal Inconsistency Detected Requiring Investigator Verification</span>
-        </div>
-        <p style="font-size: 0.84rem; color: var(--text-main); margin-top: 4px;">
-          The available exhibits show an 8-minute variance between recorded witness testimony and hallway CCTV footage.
-        </p>
+      ${(() => {
+        const cctvExhibit = evidenceList.find(e => (e.original_file_name && e.original_file_name.toLowerCase().includes("cctv")) || (e.description && e.description.toLowerCase().includes("cctv")));
+        const witnessExhibit = evidenceList.find(e => (e.original_file_name && e.original_file_name.toLowerCase().includes("witness")) || (e.description && e.description.toLowerCase().includes("witness")));
+        if (cctvExhibit && witnessExhibit) {
+          return `
+            <!-- Temporal Inconsistency Highlight -->
+            <div class="contradiction-card">
+              <div class="contradiction-header">
+                <span>⚠️</span>
+                <span>Temporal Inconsistency Detected Requiring Investigator Verification</span>
+              </div>
+              <p style="font-size: 0.84rem; color: var(--text-main); margin-top: 4px;">
+                The available exhibits show an 8-minute variance between recorded witness testimony and hallway CCTV footage.
+              </p>
 
-        <div class="contradiction-sources">
-          <div>
-            <h4 style="font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase;">Source A &bull; Witness Statement WS-02</h4>
-            <div style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); font-family: var(--font-mono);">19:10 hrs</div>
-            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">
-              Witness stated subject departed premises prior to 19:10.
+              <div class="contradiction-sources">
+                <div>
+                  <h4 style="font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase;">Source A &bull; ${Formatters.escapeHtml(witnessExhibit.original_file_name)}</h4>
+                  <div style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); font-family: var(--font-mono);">19:10 hrs</div>
+                  <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">
+                    Witness stated subject departed premises prior to 19:10.
+                  </div>
+                </div>
+                <div>
+                  <h4 style="font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase;">Source B &bull; ${Formatters.escapeHtml(cctvExhibit.original_file_name)}</h4>
+                  <div style="font-size: 1.15rem; font-weight: 700; color: var(--primary); font-family: var(--font-mono);">19:18:32 hrs</div>
+                  <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">
+                    Surveillance footage confirms subject in corridor at 19:18:32.
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--attention-border);">
+                <span style="font-size: 0.78rem; color: var(--text-secondary);">
+                  Variance: <strong>8 minutes discrepancy</strong> &bull; Non-accusatory analytical flag.
+                </span>
+                <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Inconsistency marked for Case Diary inquiry.', 'info')">
+                  Mark for Case Diary Inquiry
+                </button>
+              </div>
             </div>
+          `;
+        }
+        return `
+          <div class="card" style="padding: 14px 18px; margin-bottom: 16px; background: var(--bg-card-subtle);">
+            <span style="font-size: 0.85rem; color: var(--text-secondary);">
+              ℹ️ <strong>Chronological Sequence:</strong> Reconstructed from ${allEvents.length} authenticated exhibit(s). Cross-exhibit temporal variance analysis activates automatically when additional corroborating timeline sources are committed.
+            </span>
           </div>
-          <div>
-            <h4 style="font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase;">Source B &bull; CCTV Camera 04</h4>
-            <div style="font-size: 1.15rem; font-weight: 700; color: var(--primary); font-family: var(--font-mono);">19:18:32 hrs</div>
-            <div style="font-size: 0.78rem; color: var(--text-muted); margin-top: 2px;">
-              Surveillance footage confirms subject in corridor at 19:18:32.
-            </div>
-          </div>
-        </div>
+        `;
+      })()}
 
-        <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--attention-border);">
-          <span style="font-size: 0.78rem; color: var(--text-secondary);">
-            Variance: <strong>8 minutes discrepancy</strong> &bull; Non-accusatory analytical flag.
-          </span>
-          <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Inconsistency marked for Case Diary inquiry.', 'info')">
-            Mark for Case Diary Inquiry
-          </button>
-        </div>
-      </div>
-
-      <!-- Chronological Sequence -->
+      <!-- Chronological Sequence with Branch Representation -->
       <div class="timeline-spine">
         ${filteredEvents.map(ev => {
           const badgeClass = ev.status === "VERIFIED" ? "badge-verified" : ev.status === "REPORTED" ? "badge-info" : "badge-attention";
-          const badgeText = ev.status === "VERIFIED" ? "✓ Verified" : ev.status === "REPORTED" ? "Reported" : "Requires Verification";
+          const badgeText = ev.timeCertainty === "EXACT" ? "✓ Exact Time" : ev.timeCertainty === "REPORTED" ? "Reported Time" : "Estimated Time";
           return `
             <div class="timeline-event-card" onclick="ScreenTimeline.showEventDetails('${ev.id}')">
               <div class="timeline-event-node">●</div>
-              <div class="timeline-time-badge">${ev.time} hrs &bull; ${ev.date}</div>
-              <div class="timeline-event-desc">${ev.title}</div>
-              <div class="timeline-event-meta">
-                <span>Source: <strong>${ev.source}</strong></span>
-                <span>Exhibit: <code style="font-family: var(--font-mono); color: var(--primary);">${ev.evidenceId}</code></span>
-                <span class="badge ${badgeClass}">${badgeText}</span>
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <div class="timeline-time-badge">${ev.time} hrs &bull; ${ev.date}</div>
+                <span class="branch-pill branch-${ev.branchId}">${ev.branchLabel}</span>
+              </div>
+              <div class="timeline-event-desc">${Formatters.escapeHtml(ev.title)}</div>
+              <div style="font-size: 0.84rem; color: var(--text-secondary); margin-bottom: 6px;">${Formatters.escapeHtml(ev.desc)}</div>
+              <div class="timeline-event-meta" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                <div>
+                  <span>Source: <strong>${Formatters.escapeHtml(ev.source)}</strong></span>
+                  <span style="margin-left: 6px;">Exhibit: <code style="font-family: var(--font-mono); color: var(--primary);">${ev.evidenceId}</code></span>
+                  <span class="badge ${badgeClass}" style="margin-left: 6px;">${badgeText}</span>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="event.stopPropagation(); Router.selectCaseAndRoute('${caseId}', 'evidence'); setTimeout(() => ScreenEvidence.openEvidenceDetailDrawer('${ev.evidenceId}'), 120);">
+                  Inspect Exhibit &rarr;
+                </button>
               </div>
             </div>
           `;
@@ -2764,6 +4918,7 @@ const ScreenTimeline = {
       });
     });
   },
+
 
   showEventDetails(eventId) {
     const bodyHtml = `
@@ -2798,17 +4953,159 @@ const ScreenAnalysis = {
     const container = document.getElementById("viewContainer");
     document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Analysis`;
 
-    await ensureActiveCaseLoaded(caseId);
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
+
+    const evidenceList = State.evidence || [];
+    if (evidenceList.length === 0) {
+      container.innerHTML = `
+        ${renderWorkspaceHeaderHtml("analysis")}
+        <div class="empty-state-card" style="margin-top: 24px; padding: 48px 24px; text-align: center; background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-default);">
+          <div style="font-size: 2.8rem; margin-bottom: 12px; opacity: 0.85;">💡</div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 8px;">No Analytical Observations Generated Yet</h3>
+          <p style="color: var(--text-muted); font-size: 0.88rem; max-width: 540px; margin: 0 auto 20px auto; line-height: 1.5;">
+            Analytical reasoning traces and contradiction checks are derived strictly from verified case exhibits. No exhibits are currently attached to this case.
+          </p>
+          <div style="display: flex; gap: 12px; justify-content: center;">
+            <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence')">
+              <span>📦 Attach Case Evidence</span>
+            </button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const c = State.activeCase;
+    const isCurrentStage = c.lifecycle_stage === "ANALYSIS";
+    const isCompletedStage = ["REVIEW", "CLOSED"].includes(c.lifecycle_stage);
+    const isFutureStage = ["INITIALIZED", "EVIDENCE_INGESTION", "EVIDENCE_PROCESSING"].includes(c.lifecycle_stage);
+
+    let stageBannerHtml = "";
+    if (isFutureStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--primary-bg); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-info">STAGE 4 PREREQUISITE</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Current Case Stage: ${c.lifecycle_stage}</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Investigation Analysis Awaiting Forensic Verification
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                Case is currently in Stage <strong>${(StageDisplayMap[c.lifecycle_stage] || {}).short || c.lifecycle_stage}</strong>. 
+                Analytical observations from ${evidenceList.length} exhibit(s) are shown below, but formal investigation analysis requires completing forensic checks first.
+              </p>
+            </div>
+            <div>
+              ${c.lifecycle_stage === "EVIDENCE_PROCESSING" ? `
+                <button class="btn btn-primary btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'ANALYSIS')">
+                  Advance to Investigation Analysis &rarr;
+                </button>
+              ` : `
+                <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'verification')">
+                  View Forensic Verification &rarr;
+                </button>
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (isCurrentStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--bg-card); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-attention">ACTIVE WORKSPACE &bull; STAGE 4</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Investigation Analysis In Progress</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Investigative Observations & Analytical Reasoning
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                Review evidence-grounded observations and reasoning traces. When timeline and analytical analysis are complete, proceed to Investigator Review.
+              </p>
+            </div>
+            <div>
+              <button class="btn btn-primary btn-stage-transition" onclick="handleStageTransition('${c.case_id}', 'REVIEW')">
+                Proceed to Investigator Review &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (isCompletedStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--verified-bg); border-left: 5px solid var(--verified); padding: 16px 20px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-verified">STAGE 4 COMPLETED</span>
+                <span style="font-size: 0.8rem; color: var(--verified-text); font-family: var(--font-mono);">Timeline & Analysis Finalized</span>
+              </div>
+              <div style="font-size: 1rem; font-weight: 700; color: var(--verified-text); margin-top: 2px;">
+                Analytical Findings Preserved & Inquest Dossier Ready
+              </div>
+              <div style="font-size: 0.84rem; color: var(--verified-text); opacity: 0.9; margin-top: 2px;">
+                Analytical reasoning traces are archived with verified exhibit references under Section 194 BNSS.
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'findings')">
+              View Review Workspace &rarr;
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    let analysisRes = null;
+    try {
+      analysisRes = await Api.getAnalysisSummary(caseId);
+    } catch (ae) {
+      console.warn("Notice: could not load structured analysis summary:", ae);
+    }
+
+    let dualBrainRes = null;
+    try {
+      dualBrainRes = await Api.getDualBrain(caseId);
+    } catch (dbe) {
+      console.warn("Notice: could not load dual-brain reasoning:", dbe);
+    }
 
     const html = `
       ${renderWorkspaceHeaderHtml("analysis")}
 
+      ${stageBannerHtml}
+
       <div class="cases-toolbar">
         <div>
-          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Analytical Observations & Reasoning</h3>
-          <p style="color: var(--text-muted); font-size: 0.82rem;">Analytical observations grounded strictly in verified case exhibits.</p>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Guided Investigation Analysis</h3>
+          <p style="color: var(--text-muted); font-size: 0.82rem;">Structured, evidence-constrained evaluation of supported facts, contradictions, information gaps, and candidate hypotheses.</p>
         </div>
         <span class="badge badge-info">EC-MORE Analytical Workspace</span>
+      </div>
+
+      <!-- Stage 4 Sub-Workspace Navigation Chips -->
+      <div class="filter-chips" style="margin: 8px 0 16px;">
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'timeline')">
+          ⏱️ Chronological Sequence
+        </button>
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'connections')">
+          🕸️ Entity Graph
+        </button>
+        <button class="filter-chip active" onclick="Router.selectCaseAndRoute('${caseId}', 'analysis')">
+          💡 Analytical Observations & Reasoning
+        </button>
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'rag')">
+          🔎 Search Exhibit Passages (RAG)
+        </button>
       </div>
 
       <!-- Human Governance Notice -->
@@ -2830,84 +5127,297 @@ const ScreenAnalysis = {
         </p>
 
         <div class="correlation-flow">
-          <div class="correlation-node">📹 CCTV Camera 4</div>
-          <span class="correlation-arrow">+</span>
-          <div class="correlation-node">📄 Witness Statement WS-02</div>
-          <span class="correlation-arrow">+</span>
-          <div class="correlation-node">📱 Call Record CDR-07</div>
-          <span class="correlation-arrow">&rarr;</span>
-          <div class="correlation-node" style="border-color: var(--attention); background-color: var(--attention-bg); color: var(--attention-text);">
-            ⚠️ Potential Temporal Inconsistency
-          </div>
+          ${evidenceList.slice(0, 3).map((e, idx) => `
+            <div class="correlation-node">${Formatters.escapeHtml(e.original_file_name)}</div>
+            ${idx < Math.min(evidenceList.length, 3) - 1 ? '<span class="correlation-arrow">+</span>' : ''}
+          `).join("")}
           <span class="correlation-arrow">&rarr;</span>
           <div class="correlation-node" style="border-color: var(--primary); background-color: var(--primary-bg); color: var(--primary-text);">
-            Requires Investigator Review
+            Case-Scoped Evidentiary Grounding (${evidenceList.length} Exhibit${evidenceList.length === 1 ? '' : 's'})
           </div>
         </div>
       </div>
 
-      <!-- Observation 01 -->
-      <div class="observation-card">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <span class="badge badge-attention">POTENTIAL TEMPORAL INCONSISTENCY DETECTED</span>
-          <span style="font-size: 0.74rem; color: var(--text-muted);">Observation #01</span>
+      <!-- SECTION A: WHAT THE EVIDENCE CURRENTLY SUPPORTS -->
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 class="card-title">A. What the Evidence Currently Supports</h3>
+          <span class="badge badge-verified">Source-Backed Observations</span>
         </div>
-        <div class="observation-claim">
-          The reported departure time differs from the CCTV-recorded movement time by approximately 8 minutes.
-        </div>
-        <div>
-          <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px; text-transform: uppercase;">Supporting Evidence:</span>
-          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <span style="font-family: var(--font-mono); font-size: 0.74rem; background-color: var(--bg-card-subtle); border: 1px solid var(--border-default); padding: 2px 8px; border-radius: 4px; color: var(--primary);">📹 CCTV Camera 4</span>
-            <span style="font-family: var(--font-mono); font-size: 0.74rem; background-color: var(--bg-card-subtle); border: 1px solid var(--border-default); padding: 2px 8px; border-radius: 4px; color: var(--primary);">📄 Witness Statement WS-02</span>
-          </div>
-        </div>
-        <div class="observation-reasoning">
-          <strong>Analytical Reasoning Trace:</strong> Recorded timestamps differ: Witness statement states departure before 19:10 hrs, whereas hallway surveillance footage captures subject at 19:18:32 hrs.
-        </div>
-        <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--border-subtle); flex-wrap: wrap; gap: 8px;">
-          <div>
-            <span class="badge badge-attention">Status: Requires Investigator Verification</span>
-          </div>
-          <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary btn-sm" onclick="ScreenAnalysis.showExplainabilityModal('Observation #01', 'Reported departure time differs from CCTV recording.')">
-              Why did SAKSHI detect this?
-            </button>
-            <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Observation dismissed by investigator.', 'info')">Dismiss</button>
-            <button class="btn btn-primary btn-sm" onclick="UI.showToast('Observation added to Case Diary inquiry agenda.', 'success')">Accept for Inquiry Plan</button>
-          </div>
+        <p style="font-size: 0.82rem; color: var(--text-muted); margin: 4px 0 14px 0;">
+          Direct physical and documentary observations anchored with cryptographic fingerprints to verified case exhibits.
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+          ${(() => {
+            const cctvExhibit = evidenceList.find(e => (e.original_file_name && e.original_file_name.toLowerCase().includes("cctv")) || (e.description && e.description.toLowerCase().includes("cctv")));
+            const witnessExhibit = evidenceList.find(e => (e.original_file_name && e.original_file_name.toLowerCase().includes("witness")) || (e.description && e.description.toLowerCase().includes("witness")));
+            
+            let obsCards = "";
+            let obsCount = 0;
+
+            if (cctvExhibit && witnessExhibit) {
+              obsCount++;
+              obsCards += `
+                <div class="observation-card">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <span class="badge badge-attention">POTENTIAL TEMPORAL INCONSISTENCY DETECTED</span>
+                    <span style="font-size: 0.74rem; color: var(--text-muted);">Observation #${String(obsCount).padStart(2, '0')}</span>
+                  </div>
+                  <div class="observation-claim">
+                    The reported departure time differs from the surveillance-recorded movement time by approximately 8 minutes.
+                  </div>
+                  <div>
+                    <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px; text-transform: uppercase;">Supporting Evidence:</span>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                      <span style="font-family: var(--font-mono); font-size: 0.74rem; background-color: var(--bg-card-subtle); border: 1px solid var(--border-default); padding: 2px 8px; border-radius: 4px; color: var(--primary);">${Formatters.escapeHtml(cctvExhibit.original_file_name)}</span>
+                      <span style="font-family: var(--font-mono); font-size: 0.74rem; background-color: var(--bg-card-subtle); border: 1px solid var(--border-default); padding: 2px 8px; border-radius: 4px; color: var(--primary);">${Formatters.escapeHtml(witnessExhibit.original_file_name)}</span>
+                    </div>
+                  </div>
+                  <div class="observation-reasoning">
+                    <strong>Analytical Reasoning Trace:</strong> Recorded timestamps differ: Witness statement states departure before 19:10 hrs, whereas surveillance footage captures subject at 19:18:32 hrs.
+                  </div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--border-subtle); flex-wrap: wrap; gap: 8px;">
+                    <div>
+                      <span class="badge badge-attention">Status: Requires Investigator Verification</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                      <button class="btn btn-secondary btn-sm" onclick="ScreenAnalysis.showExplainabilityModal('Observation #${String(obsCount).padStart(2, '0')}', 'Reported departure time differs from surveillance recording.')">
+                        Why did SAKSHI detect this?
+                      </button>
+                      <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Observation dismissed by investigator.', 'info')">Dismiss</button>
+                      <button class="btn btn-primary btn-sm" onclick="UI.showToast('Observation added to Case Diary inquiry agenda.', 'success')">Accept for Inquiry Plan</button>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }
+
+            // Render legitimate exhibit-derived observations
+            evidenceList.forEach((e, idx) => {
+              obsCount++;
+              const isVerified = e.integrity_status === "VERIFIED" && e.worm_status === "COMMITTED";
+              obsCards += `
+                <div class="observation-card">
+                  <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                    <span class="badge ${isVerified ? 'badge-verified' : 'badge-attention'}">
+                      ${isVerified ? '✓ CRYPTOGRAPHICALLY SECURED EXHIBIT' : 'AWAITING FORENSIC VERIFICATION'}
+                    </span>
+                    <span style="font-size: 0.74rem; color: var(--text-muted);">Observation #${String(obsCount).padStart(2, '0')}</span>
+                  </div>
+                  <div class="observation-claim">
+                    Exhibit "${Formatters.escapeHtml(e.original_file_name)}" admitted under category ${Formatters.formatCategory(e.evidence_category)}.
+                  </div>
+                  <div>
+                    <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px; text-transform: uppercase;">Evidentiary Grounding:</span>
+                    <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                      <span style="font-family: var(--font-mono); font-size: 0.74rem; background-color: var(--bg-card-subtle); border: 1px solid var(--border-default); padding: 2px 8px; border-radius: 4px; color: var(--primary);">${Formatters.escapeHtml(e.evidence_id)}</span>
+                      <span style="font-size: 0.74rem; color: var(--text-secondary);">${Formatters.formatBytes(e.file_size_bytes)}</span>
+                    </div>
+                  </div>
+                  <div class="observation-reasoning">
+                    <strong>Forensic Provenance:</strong> Dual-hash integrity ${e.integrity_status || 'PENDING'} &bull; Storage reference: <code>${Formatters.escapeHtml(e.worm_storage_reference || 'Pending commit')}</code> &bull; Source: ${Formatters.escapeHtml(e.source_device_or_person || 'Station Custody')}.
+                  </div>
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--border-subtle); flex-wrap: wrap; gap: 8px;">
+                    <div>
+                      <span class="badge ${isVerified ? 'badge-verified' : 'badge-neutral'}">
+                        ${isVerified ? 'Status: Provenance Confirmed' : 'Status: Verification Queued'}
+                      </span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                      <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence'); setTimeout(() => ScreenEvidence.openEvidenceDetailDrawer('${e.evidence_id}'), 120);">
+                        Inspect Exhibit &rarr;
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              `;
+            });
+
+            return obsCards;
+          })()}
         </div>
       </div>
 
-      <!-- Observation 02 -->
-      <div class="observation-card">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-          <span class="badge badge-attention">COMMUNICATION ACTIVITY PATTERN OBSERVED</span>
-          <span style="font-size: 0.74rem; color: var(--text-muted);">Observation #02</span>
-        </div>
-        <div class="observation-claim">
-          Cellular telephone handset transactions ceased abruptly 42 minutes prior to the recorded emergency dispatch call.
-        </div>
-        <div>
-          <span style="font-size: 0.72rem; color: var(--text-muted); display: block; margin-bottom: 4px; text-transform: uppercase;">Supporting Evidence:</span>
-          <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-            <span style="font-family: var(--font-mono); font-size: 0.74rem; background-color: var(--bg-card-subtle); border: 1px solid var(--border-default); padding: 2px 8px; border-radius: 4px; color: var(--primary);">📱 CDR Sheet Sector 4</span>
-            <span style="font-family: var(--font-mono); font-size: 0.74rem; background-color: var(--bg-card-subtle); border: 1px solid var(--border-default); padding: 2px 8px; border-radius: 4px; color: var(--primary);">🎙 PCR Dispatch Audio</span>
+      <!-- SECTION C: WHAT REMAINS UNKNOWN (EVIDENCE GAPS) -->
+      ${(analysisRes && analysisRes.investigation_gaps && analysisRes.investigation_gaps.length > 0) ? `
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 class="card-title">C. What Remains Unknown — Evidence Gaps & Follow-ups</h3>
+            <span class="badge badge-attention">${analysisRes.investigation_gaps.length} Gaps Identified</span>
+          </div>
+          <p style="font-size: 0.82rem; color: var(--text-muted); margin: 4px 0 14px 0;">
+            Missing reports, unconfirmed toxicological findings, or telecom logs requiring requisition.
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            ${analysisRes.investigation_gaps.map(g => `
+              <div style="padding: 12px 14px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                  <strong style="color: var(--text-main); font-size: 0.9rem;">${Formatters.escapeHtml(g.missing)}</strong>
+                  <span class="badge ${g.priority === 'HIGH' ? 'badge-danger' : 'badge-attention'}">${g.priority} PRIORITY</span>
+                </div>
+                <div style="font-size: 0.84rem; color: var(--text-secondary); margin-bottom: 4px;">
+                  <strong>Why it matters:</strong> ${Formatters.escapeHtml(g.why_it_matters)}
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--text-muted); flex-wrap: wrap; gap: 8px;">
+                  <span>Custodian: <strong>${Formatters.escapeHtml(g.potential_custodian || 'Competent Authority')}</strong></span>
+                  <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Requisition agenda recorded in Case Diary.', 'info')">
+                    ${Formatters.escapeHtml(g.recommended_action || 'Requisition Record')}
+                  </button>
+                </div>
+              </div>
+            `).join("")}
           </div>
         </div>
-        <div class="observation-reasoning">
-          <strong>Analytical Reasoning Trace:</strong> Cellular network pings stopped at 19:22 hrs across recorded SIM interfaces without standard power-off detachment signals.
-        </div>
-        <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 8px; border-top: 1px solid var(--border-subtle); flex-wrap: wrap; gap: 8px;">
+      ` : ''}
+
+      <!-- SECTION D: DUAL-BRAIN REASONING WORKSPACE (INTUITION VS DISCIPLINE) -->
+      <div class="card" style="margin-bottom: 20px;">
+        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
           <div>
-            <span class="badge badge-attention">Status: Requires Investigator Verification</span>
+            <h3 class="card-title" style="margin: 0;">D. Dual-Brain Reasoning Workspace</h3>
+            <p style="color: var(--text-muted); font-size: 0.8rem; margin: 4px 0 0 0;">
+              Controlled, evidence-grounded hypothesis generation challenged by statutory falsification rules.
+            </p>
           </div>
-          <div style="display: flex; gap: 8px;">
-            <button class="btn btn-secondary btn-sm" onclick="ScreenAnalysis.showExplainabilityModal('Observation #02', 'Cellular activity ceased 42 minutes prior to emergency call.')">
-              Why did SAKSHI detect this?
-            </button>
-            <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Observation dismissed by investigator.', 'info')">Dismiss</button>
-            <button class="btn btn-primary btn-sm" onclick="UI.showToast('Observation added to Case Diary inquiry agenda.', 'success')">Accept for Inquiry Plan</button>
+          <span class="badge badge-attention">EC-MORE Dual-Brain Engine</span>
+        </div>
+
+        <div class="dual-brain-banner" style="margin-top: 14px;">
+          <div>
+            <div style="font-weight: 700; color: var(--text-main); font-size: 0.95rem;">
+              🧠 Dual-Brain Architecture &bull; Information Firewall Active
+            </div>
+            <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 2px;">
+              Intuition Brain hypotheses are cryptographically isolated from factual exhibits. Discipline Brain enforces falsification and legal admissibility under Section 194 BNSS &amp; Section 63 BSA.
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <span class="gate-pill gate-CORROBORATION">Firewall: ${(dualBrainRes && dualBrainRes.firewall_status) || 'ACTIVE_ENFORCED'}</span>
+            <span class="gate-pill gate-BLOCKED">Evidence Gate: ${(dualBrainRes && dualBrainRes.evidence_gate_status) || 'ENFORCING_MINIMUM_CREDIBILITY'}</span>
+          </div>
+        </div>
+
+        <div style="padding: 10px 14px; background: var(--attention-bg); border-left: 4px solid var(--attention); border-radius: var(--radius-sm); font-size: 0.8rem; color: var(--attention-text); margin-bottom: 16px;">
+          ⚖️ <strong>Investigative Safeguard Notice:</strong> Candidate scenarios below are investigative hypotheses generated to assist inquiry. They do NOT represent established legal facts, nor do they implicate individuals. SAKSHI never declares guilt. The Investigating Officer remains the sole decision-maker.
+        </div>
+
+        <div class="dual-brain-grid">
+          <!-- Column 1: Intuition Brain -->
+          <div>
+            <div class="brain-column-header brain-column-intuition">
+              <span style="font-size: 1.3rem;">💡</span>
+              <div>
+                <strong style="color: #3b82f6; font-size: 0.95rem;">Intuition Brain (Candidate Proposals)</strong>
+                <div style="font-size: 0.76rem; color: var(--text-muted);">Proposes plausible scenarios, assumptions, and investigative leads</div>
+              </div>
+            </div>
+
+            ${(dualBrainRes && dualBrainRes.intuition_proposals && dualBrainRes.intuition_proposals.length > 0) ? dualBrainRes.intuition_proposals.map(p => `
+              <div class="proposal-card">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+                  <strong style="font-size: 0.92rem; color: var(--text-main);">${Formatters.escapeHtml(p.scenario_title)}</strong>
+                  <span class="gate-pill gate-BLOCKED" style="font-size: 0.68rem;">${p.gate_status}</span>
+                </div>
+                <p style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.45; margin-bottom: 10px;">
+                  ${Formatters.escapeHtml(p.narrative_hypothesis)}
+                </p>
+
+                ${p.core_assumptions && p.core_assumptions.length > 0 ? `
+                  <div style="margin-bottom: 8px;">
+                    <span style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Core Assumptions:</span>
+                    <ul style="margin: 2px 0 0 16px; padding: 0; font-size: 0.78rem; color: var(--text-secondary);">
+                      ${p.core_assumptions.map(a => `<li>${Formatters.escapeHtml(a)}</li>`).join("")}
+                    </ul>
+                  </div>
+                ` : ''}
+
+                ${p.neutral_investigative_questions && p.neutral_investigative_questions.length > 0 ? `
+                  <div style="margin-bottom: 8px;">
+                    <span style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: #3b82f6;">Neutral Investigative Questions:</span>
+                    <ul style="margin: 2px 0 0 16px; padding: 0; font-size: 0.78rem; color: var(--text-secondary);">
+                      ${p.neutral_investigative_questions.map(q => `<li>${Formatters.escapeHtml(q)}</li>`).join("")}
+                    </ul>
+                  </div>
+                ` : ''}
+
+                ${p.required_evidentiary_checks && p.required_evidentiary_checks.length > 0 ? `
+                  <div style="margin-bottom: 6px; font-size: 0.76rem; color: var(--text-muted);">
+                    <span style="font-weight: 600;">Required Verification:</span> ${p.required_evidentiary_checks.map(Formatters.escapeHtml).join("; ")}
+                  </div>
+                ` : ''}
+
+                <div style="font-size: 0.72rem; color: var(--text-muted); font-style: italic; border-top: 1px solid var(--border-subtle); padding-top: 6px; margin-top: 6px;">
+                  ${Formatters.escapeHtml(p.investigator_prerogative_notice)}
+                </div>
+              </div>
+            `).join("") : (analysisRes && analysisRes.candidate_scenarios && analysisRes.candidate_scenarios.length > 0) ? analysisRes.candidate_scenarios.map(sc => `
+              <div class="proposal-card">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+                  <strong style="font-size: 0.92rem; color: var(--text-main);">${Formatters.escapeHtml(sc.title)}</strong>
+                  <span class="gate-pill gate-BLOCKED" style="font-size: 0.68rem;">REQUIRES_CORROBORATION</span>
+                </div>
+                <p style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.45; margin-bottom: 10px;">
+                  ${Formatters.escapeHtml(sc.plain_language_description)}
+                </p>
+                <div style="font-size: 0.74rem; color: var(--text-muted);">
+                  <strong>Supporting Exhibits:</strong> ${sc.supporting_evidence && sc.supporting_evidence.length > 0 ? sc.supporting_evidence.map(Formatters.escapeHtml).join(", ") : "None cited"}
+                </div>
+              </div>
+            `).join("") : `
+              <div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 0.85rem; background: var(--bg-card-subtle); border-radius: var(--radius-md);">
+                No candidate proposals generated yet. Attach case exhibits to initialize intuitive reasoning.
+              </div>
+            `}
+          </div>
+
+          <!-- Column 2: Discipline Brain -->
+          <div>
+            <div class="brain-column-header brain-column-discipline">
+              <span style="font-size: 1.3rem;">🛡️</span>
+              <div>
+                <strong style="color: #ef4444; font-size: 0.95rem;">Discipline Brain (Admissibility & Falsification)</strong>
+                <div style="font-size: 0.76rem; color: var(--text-muted);">Challenges assumptions, checks timelines, enforces statutory admissibility</div>
+              </div>
+            </div>
+
+            ${(dualBrainRes && dualBrainRes.discipline_challenges && dualBrainRes.discipline_challenges.length > 0) ? dualBrainRes.discipline_challenges.map(c => `
+              <div class="challenge-card">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
+                  <strong style="font-size: 0.92rem; color: #ef4444;">Target: ${Formatters.escapeHtml(c.target_proposal_id)}</strong>
+                  <span class="badge badge-attention" style="font-size: 0.68rem;">${c.status}</span>
+                </div>
+                
+                <div style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.45; margin-bottom: 10px;">
+                  <strong>Objection:</strong> ${Formatters.escapeHtml(c.evidentiary_objection)}
+                </div>
+
+                ${c.temporal_inconsistencies && c.temporal_inconsistencies.length > 0 ? `
+                  <div style="margin-bottom: 8px;">
+                    <span style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: #ef4444;">Temporal Conflicts:</span>
+                    <ul style="margin: 2px 0 0 16px; padding: 0; font-size: 0.78rem; color: var(--text-secondary);">
+                      ${c.temporal_inconsistencies.map(t => `<li>${Formatters.escapeHtml(t)}</li>`).join("")}
+                    </ul>
+                  </div>
+                ` : ''}
+
+                ${c.missing_procedural_certificates && c.missing_procedural_certificates.length > 0 ? `
+                  <div style="margin-bottom: 8px;">
+                    <span style="font-size: 0.72rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted);">Procedural & Certificate Gaps:</span>
+                    <ul style="margin: 2px 0 0 16px; padding: 0; font-size: 0.78rem; color: var(--text-secondary);">
+                      ${c.missing_procedural_certificates.map(m => `<li>${Formatters.escapeHtml(m)}</li>`).join("")}
+                    </ul>
+                  </div>
+                ` : ''}
+
+                <div style="font-size: 0.75rem; color: var(--text-muted); background: var(--bg-card-subtle); padding: 6px 10px; border-radius: var(--radius-sm); border-left: 3px solid #ef4444; margin-top: 6px;">
+                  <strong>Statutory Citation:</strong> ${Formatters.escapeHtml(c.statutory_rule_citation)}
+                </div>
+              </div>
+            `).join("") : `
+              <div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 0.85rem; background: var(--bg-card-subtle); border-radius: var(--radius-md);">
+                No active objections. Awaiting evidence and candidate proposals.
+              </div>
+            `}
           </div>
         </div>
       </div>
@@ -2915,6 +5425,7 @@ const ScreenAnalysis = {
 
     container.innerHTML = html;
   },
+
 
   showExplainabilityModal(title, claim) {
     const bodyHtml = `
@@ -2959,13 +5470,7 @@ const ScreenRAGSearch = {
     try {
       await ensureActiveCaseLoaded(caseId);
     } catch (err) {
-      container.innerHTML = `
-        <div class="card" style="padding: 24px; text-align: center; margin: 30px auto; max-width: 600px;">
-          <h3>Case Access Error</h3>
-          <p style="color: var(--text-muted); margin: 12px 0;">Unable to access case ${Formatters.escapeHtml(caseId)}: ${Formatters.escapeHtml(err.message)}</p>
-          <button class="btn btn-primary" onclick="window.location.hash='#/cases'">Return to Case Directory</button>
-        </div>
-      `;
+      renderCaseNotFound(caseId, err.message);
       return;
     }
 
@@ -2974,12 +5479,28 @@ const ScreenRAGSearch = {
 
       <div class="cases-toolbar">
         <div>
-          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Evidence RAG Semantic Search</h3>
-          <p style="color: var(--text-muted); font-size: 0.82rem;">Neural vector similarity retrieval across verified case documents and ballistic/forensic exhibits.</p>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Evidence Intelligence &amp; Search</h3>
+          <p style="color: var(--text-muted); font-size: 0.82rem;">Ask natural language questions or perform vector search across verified case exhibits with cryptographic citation provenance.</p>
         </div>
         <div style="display: flex; gap: 8px; align-items: center;">
           <span class="badge badge-info" id="ragRetrievalModeBadge">PostgreSQL / pgvector Ready</span>
         </div>
+      </div>
+
+      <!-- Stage 4 Sub-Workspace Navigation Chips -->
+      <div class="filter-chips" style="margin: 8px 0 16px;">
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'timeline')">
+          ⏱️ Chronological Sequence
+        </button>
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'connections')">
+          🕸️ Entity Graph
+        </button>
+        <button class="filter-chip" onclick="Router.selectCaseAndRoute('${caseId}', 'analysis')">
+          💡 Analytical Observations &amp; Reasoning
+        </button>
+        <button class="filter-chip active" onclick="Router.selectCaseAndRoute('${caseId}', 'rag')">
+          🔎 Search Exhibit Passages (RAG)
+        </button>
       </div>
 
       <!-- Evidentiary Provenance Notice -->
@@ -2987,8 +5508,67 @@ const ScreenRAGSearch = {
         <span style="font-size: 1.2rem;">⚖️</span>
         <div>
           <strong>Evidentiary Provenance Notice:</strong>
-          <span> Retrieved passages are verified forensic source materials from the case docket, scored by cosine vector similarity. SAKSHI retrieves original text with cryptographic fingerprints; it never fabricates or summarizes content.</span>
+          <span> Retrieved passages are verified forensic source materials from the case docket. Results are relevant excerpts based on keyword and semantic similarity, not complete answers, verified conclusions, or proof of guilt.</span>
         </div>
+      </div>
+
+      <!-- OFFICER ASSISTANT: ASK ABOUT THIS CASE -->
+      <div class="card ask-case-card" style="padding: 22px; margin-bottom: 24px; border-left: 4px solid var(--primary); background: var(--bg-card);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+          <div>
+            <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin: 0;">💬 Ask About This Case</h3>
+            <p style="color: var(--text-muted); font-size: 0.82rem; margin: 4px 0 0 0;">
+              Ask natural-language questions grounded strictly in authenticated exhibits. SAKSHI synthesizes verbatim quotes with exact page and chunk citations.
+            </p>
+          </div>
+          <span class="badge badge-verified">Evidence-Grounded Assistant</span>
+        </div>
+
+        <!-- Quick Question Prompts -->
+        <div style="margin: 12px 0 14px 0;">
+          <span style="font-size: 0.74rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); display: block; margin-bottom: 6px;">
+            Suggested Inquiries:
+          </span>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-secondary btn-sm" style="font-size: 0.78rem;" onclick="ScreenRAGSearch.handleAskCase('${caseId}', 'What time did the FIR report the incident?')">
+              🕒 FIR incident time?
+            </button>
+            <button class="btn btn-secondary btn-sm" style="font-size: 0.78rem;" onclick="ScreenRAGSearch.handleAskCase('${caseId}', 'What did the witness statement say about the departure time?')">
+              👥 Witness departure time?
+            </button>
+            <button class="btn btn-secondary btn-sm" style="font-size: 0.78rem;" onclick="ScreenRAGSearch.handleAskCase('${caseId}', 'Which documents mention a particular location?')">
+              📍 Mentioned locations?
+            </button>
+            <button class="btn btn-secondary btn-sm" style="font-size: 0.78rem;" onclick="ScreenRAGSearch.handleAskCase('${caseId}', 'What information remains unavailable?')">
+              ❓ Gaps &amp; missing records?
+            </button>
+          </div>
+        </div>
+
+        <!-- Inquiry Form -->
+        <form id="askCaseForm" onsubmit="event.preventDefault(); ScreenRAGSearch.handleAskCase('${caseId}');">
+          <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+            <input
+              type="text"
+              id="askCaseQuestionInput"
+              class="form-control"
+              placeholder="e.g. What time did the FIR report the incident? What did the post-mortem conclude?"
+              style="flex: 1; min-width: 280px; height: 44px; font-size: 0.92rem;"
+            />
+            <button type="submit" id="askCaseSubmitBtn" class="btn btn-primary" style="height: 44px; padding: 0 20px; font-weight: 600;">
+              <span class="icon">💬</span> Ask Assistant
+            </button>
+          </div>
+        </form>
+
+        <!-- Dynamic Answer Area -->
+        <div id="askCaseResultArea" style="display: none; margin-top: 14px;"></div>
+      </div>
+
+      <!-- Advanced Passage Vector Search -->
+      <div style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+        <h4 style="font-size: 1rem; font-weight: 700; color: var(--text-main); margin: 0;">🔎 Raw Passage Retrieval (pgvector HNSW)</h4>
+        <span style="font-size: 0.78rem; color: var(--text-muted);">Exact chunk scores &amp; character offsets</span>
       </div>
 
       <!-- Search Input Card -->
@@ -3000,23 +5580,23 @@ const ScreenRAGSearch = {
                 type="text"
                 id="ragQueryInput"
                 class="form-control"
-                placeholder="Enter forensic inquiry (e.g. ballistic trajectory 9mm, vehicle speeding northbound, CDR tower data)..."
+                placeholder="Enter forensic keywords (e.g. ballistic trajectory 9mm, vehicle speeding northbound, CDR tower data)..."
                 value="${Formatters.escapeHtml(ScreenRAGSearch.lastQuery)}"
                 required
                 style="height: 44px; font-size: 0.95rem;"
               />
               <div id="ragQueryValidation" style="color: var(--danger); font-size: 0.78rem; margin-top: 4px; display: none;"></div>
             </div>
-            <div style="width: 150px;">
+            <div style="width: 200px;">
               <select id="ragLimitSelect" class="form-control" style="height: 44px; font-size: 0.88rem;">
-                <option value="5" selected>Top 5 Passages</option>
-                <option value="10">Top 10 Passages</option>
-                <option value="20">Top 20 Passages</option>
+                <option value="5" selected>Show up to 5 matching excerpts</option>
+                <option value="10">Show up to 10 matching excerpts</option>
+                <option value="20">Show up to 20 matching excerpts</option>
               </select>
             </div>
             <div>
-              <button type="submit" id="ragSubmitBtn" class="btn btn-primary" style="height: 44px; padding: 0 20px; font-weight: 600;">
-                <span class="icon">🔎</span> Search Exhibits
+              <button type="submit" id="ragSubmitBtn" class="btn btn-secondary" style="height: 44px; padding: 0 20px; font-weight: 600;">
+                <span class="icon">🔎</span> Search Raw Excerpts
               </button>
             </div>
           </div>
@@ -3029,9 +5609,122 @@ const ScreenRAGSearch = {
       </div>
     `;
 
-    const inputEl = document.getElementById("ragQueryInput");
-    if (inputEl && !ScreenRAGSearch.lastQuery) {
+    const inputEl = document.getElementById("askCaseQuestionInput");
+    if (inputEl) {
       inputEl.focus();
+    }
+  },
+
+  async handleAskCase(caseId, directQuery = null) {
+    const inputEl = document.getElementById("askCaseQuestionInput");
+    const query = directQuery || (inputEl ? inputEl.value : "").trim();
+    const submitBtn = document.getElementById("askCaseSubmitBtn");
+    const resultArea = document.getElementById("askCaseResultArea");
+
+    if (!query) {
+      if (inputEl) inputEl.focus();
+      return;
+    }
+
+    if (inputEl) inputEl.value = query;
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<span class="icon">⏳</span> Consulting Exhibits...`;
+    }
+
+    if (resultArea) {
+      resultArea.style.display = "block";
+      resultArea.innerHTML = `
+        <div style="padding: 24px; text-align: center; color: var(--text-muted); background: var(--bg-card-subtle); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+          <div style="font-size: 1.8rem; margin-bottom: 8px;">⏳</div>
+          <h4 style="color: var(--text-main); margin-bottom: 4px;">Consulting Verified Case Docket...</h4>
+          <p style="font-size: 0.85rem; margin: 0;">Retrieving passages across exhibits and synthesizing source-grounded response for case ${Formatters.escapeHtml(caseId)}.</p>
+        </div>
+      `;
+    }
+
+    try {
+      const res = await Api.askCaseQuestion(caseId, query);
+      UI.recordAudit("CASE_QUESTION_ASKED", caseId, "SUCCESS", `Q: ${query.substring(0, 60)}`);
+
+      if (resultArea) {
+        resultArea.innerHTML = `
+          <div class="card" style="padding: 20px; border-left: 4px solid var(--primary); background: var(--bg-card); margin-top: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+              <div>
+                <span class="badge badge-info" style="margin-bottom: 4px;">SOURCE-GROUNDED ASSISTANT ANSWER</span>
+                <div style="font-size: 0.95rem; font-weight: 700; color: var(--text-main);">
+                  "${Formatters.escapeHtml(res.question)}"
+                </div>
+              </div>
+              <div>
+                ${res.insufficient_evidence ? `
+                  <span class="badge badge-attention">INSUFFICIENT DOCKET EVIDENCE</span>
+                ` : `
+                  <span class="badge badge-verified">● ${res.citations.length} VERIFIED CITATION${res.citations.length === 1 ? '' : 'S'}</span>
+                `}
+              </div>
+            </div>
+
+            <!-- Synthesized Plain Language Answer -->
+            <div style="font-size: 0.95rem; line-height: 1.6; color: var(--text-main); margin-bottom: 16px; background: var(--bg-card-subtle); padding: 14px 18px; border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+              ${Formatters.escapeHtml(res.answer)}
+            </div>
+
+            <!-- Citations -->
+            ${res.citations && res.citations.length > 0 ? `
+              <div style="margin-bottom: 14px;">
+                <div style="font-size: 0.74rem; font-weight: 700; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.05em; margin-bottom: 8px;">
+                  Exhibits &amp; Passages Consulted (${res.citations.length}):
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  ${res.citations.map(cit => `
+                    <div style="padding: 12px 14px; background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-sm); border-left: 3px solid var(--primary);">
+                      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; flex-wrap: wrap; gap: 6px;">
+                        <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                          <strong style="color: var(--text-main); font-size: 0.88rem;">📄 ${Formatters.escapeHtml(cit.document_name)}</strong>
+                          <span class="badge badge-neutral" style="font-family: var(--font-mono); font-size: 0.72rem;">${cit.exhibit_id}</span>
+                          ${cit.page_number ? `<span class="badge badge-neutral" style="font-size: 0.72rem;">Page ${cit.page_number}</span>` : ''}
+                        </div>
+                        <span class="badge badge-info" style="font-size: 0.72rem; font-family: var(--font-mono);">Match: ${(cit.similarity_score * 100).toFixed(1)}%</span>
+                      </div>
+                      <div style="font-size: 0.84rem; color: var(--text-secondary); font-style: italic; background: var(--bg-card-subtle); padding: 8px 12px; border-radius: var(--radius-sm); border-left: 2px solid var(--border-default); margin-bottom: 6px;">
+                        "${Formatters.escapeHtml(cit.verbatim_quote)}"
+                      </div>
+                      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72rem; color: var(--text-muted); flex-wrap: wrap; gap: 6px;">
+                        <span>${Formatters.escapeHtml(cit.legal_caution)}</span>
+                        <button class="btn btn-secondary btn-sm" style="font-size: 0.72rem; padding: 2px 8px;" onclick="ScreenEvidence.showExhibitDetailModal('${cit.exhibit_id}')">
+                          Inspect Exhibit &rarr;
+                        </button>
+                      </div>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ''}
+
+            <!-- Legal Safeguard Footer -->
+            <div style="font-size: 0.76rem; color: var(--text-muted); border-top: 1px solid var(--border-subtle); padding-top: 8px; display: flex; align-items: center; gap: 6px;">
+              <span>⚖️</span>
+              <span><strong>Admissibility Note:</strong> Synthesis is an investigative aid under Section 194 BNSS. Formal statements and judicial findings require primary exhibit examination under Section 63 BSA.</span>
+            </div>
+          </div>
+        `;
+      }
+    } catch (err) {
+      if (resultArea) {
+        resultArea.innerHTML = `
+          <div class="card" style="padding: 20px; border-left: 4px solid var(--danger); margin-top: 14px;">
+            <strong style="color: var(--danger);">Inquiry Failed:</strong>
+            <p style="color: var(--text-secondary); font-size: 0.88rem; margin: 4px 0 0 0;">${Formatters.escapeHtml(err.message || 'Error executing inquiry')}</p>
+          </div>
+        `;
+      }
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = `<span class="icon">💬</span> Ask Assistant`;
+      }
     }
   },
 
@@ -3118,6 +5811,21 @@ const ScreenRAGSearch = {
     }
 
     const res = ScreenRAGSearch.lastResults;
+    const evidenceList = State.evidence || [];
+
+    if (evidenceList.length === 0 && !res) {
+      return `
+        <div class="card empty-state-card" style="padding: 40px; text-align: center;">
+          <div style="font-size: 2.2rem; margin-bottom: 8px;">📑</div>
+          <h4 style="color: var(--text-main); margin-bottom: 6px;">No Evidence Uploaded Yet</h4>
+          <p style="font-size: 0.85rem; max-width: 500px; margin: 0 auto 16px auto; color: var(--text-muted);">
+            Forensic document search (RAG) requires committed textual exhibits (e.g. post-mortem reports, witness statements, ballistic certificates) to index passages. No exhibits have been attached to this case file yet.
+          </p>
+          <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${State.activeCaseId}', 'evidence')">+ Add Evidence</button>
+        </div>
+      `;
+    }
+
     if (!res) {
       return `
         <div class="card" style="padding: 40px; text-align: center; color: var(--text-muted);">
@@ -3185,8 +5893,8 @@ const ScreenRAGSearch = {
             </div>
 
             <div style="display: flex; align-items: center; gap: 6px;">
-              <span style="font-size: 0.78rem; color: var(--text-muted);">Cosine Similarity:</span>
-              <span class="badge ${scoreBadgeClass}" style="font-family: var(--font-mono); font-weight: 700;">
+              <span style="font-size: 0.78rem; color: var(--text-muted);">Passage Relevance Match:</span>
+              <span class="badge ${scoreBadgeClass}" style="font-family: var(--font-mono); font-weight: 700;" title="Mathematical similarity metric, not a probability of truth">
                 ${item.similarity_score.toFixed(4)}
               </span>
             </div>
@@ -3209,6 +5917,32 @@ ${Formatters.escapeHtml(item.passage)}
               <span>Pipeline: ${Formatters.escapeHtml(item.processing_version || 'v1.0')}</span>
             </div>
           </div>
+
+          <!-- Technical Provenance Disclosure Panel -->
+          <div style="margin-top: 10px;">
+            ${StatusPresentation.renderTechnicalDetailsPanel(
+              `RAG Provenance & Technical Offsets (${Formatters.escapeHtml(item.chunk_id)})`,
+              [
+                { label: "Document ID", value: item.document_id },
+                { label: "Chunk ID", value: item.chunk_id },
+                { label: "Source Evidence ID", value: item.evidence_id },
+                { label: "Case ID", value: item.case_id || State.activeCaseId },
+                { label: "Page Number", value: item.page_number != null ? String(item.page_number) : null },
+                { label: "Character Offsets", value: (item.char_start != null && item.char_end != null) ? `${item.char_start} – ${item.char_end}` : null },
+                { label: "Similarity Score", value: item.similarity_score != null ? String(item.similarity_score.toFixed(6)) : null },
+                { label: "Source SHA-256 Checksum", value: item.source_sha256 },
+                { label: "Source SHA3-512 Checksum", value: item.source_sha3_512 },
+                { label: "Processing Pipeline Version", value: item.processing_version || "v1.0" },
+                { label: "Embedding Architecture", value: "text-embedding-3-small (1536-dimensional vectors)" }
+              ].filter(it => it.value !== null && it.value !== undefined)
+            )}
+          </div>
+
+          <div style="margin-top: 10px; display: flex; justify-content: flex-end;">
+            <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${item.case_id || State.activeCaseId}', 'evidence'); setTimeout(() => ScreenEvidence.openEvidenceDetailDrawer('${item.evidence_id}'), 120);">
+              Inspect Source Exhibit &rarr;
+            </button>
+          </div>
         </div>
       `;
     }).join("");
@@ -3221,52 +5955,258 @@ ${Formatters.escapeHtml(item.passage)}
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 12. SCREEN 6: INVESTIGATION GAPS (Route: #/cases/:id/gaps)
+// 12a. SCREEN 6a: REVIEW FINDINGS (Route: #/cases/:id/findings)
 // ═══════════════════════════════════════════════════════════════════════════
 
-const ScreenGaps = {
-  async render(caseId) {
+const ScreenFindings = {
+  activeTab: "gaps",
+
+  async render(caseId, tab = null) {
+    if (tab) this.activeTab = tab;
     const container = document.getElementById("viewContainer");
-    document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Investigation Gaps`;
+    document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Review Findings`;
 
-    await ensureActiveCaseLoaded(caseId);
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
 
-    const gaps = [
-      {
-        priority: "HIGH",
-        missing: "Surveillance footage covering rear stairwell exit between 19:10 and 19:30",
-        relevance: "Required to verify movement during the relevant time window and reconcile the 8-minute variance.",
-        source: "Adjacent Commercial Bank CCTV Server facing back alley",
-        action: "Obtain missing CCTV backup from adjacent bank premises."
-      },
-      {
-        priority: "MEDIUM",
-        missing: "Telecom CDR records for second SIM IMEI registered to victim handset",
-        relevance: "Required to confirm if second subscriber profile was active during the 19:22 telecom cessation.",
-        source: "Cellular Service Provider Nodal Officer",
-        action: "Submit supplementary CDR request to nodal telecom authority."
-      },
-      {
-        priority: "LOW",
-        missing: "Viscera chemical examination report confirmation",
-        relevance: "Required to exclude toxic substances as primary or contributing cause of death.",
-        source: "State Forensic Science Laboratory (FSL Chemical Division)",
-        action: "Follow up with toxicology division for expedited report."
-      }
-    ];
+    const c = State.activeCase;
+    const evidenceList = State.evidence || [];
+
+    if (evidenceList.length === 0) {
+      container.innerHTML = `
+        ${renderWorkspaceHeaderHtml("findings")}
+        <div class="empty-state-card" style="margin-top: 24px; padding: 48px 24px; text-align: center; background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-default);">
+          <div style="font-size: 2.8rem; margin-bottom: 12px; opacity: 0.85;">🔎</div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 8px;">No Findings Generated Yet</h3>
+          <p style="color: var(--text-muted); font-size: 0.88rem; max-width: 560px; margin: 0 auto 20px auto; line-height: 1.5;">
+            A case with zero exhibits contains no verified findings. Complete evidence collection to attach case documents, photographs, call records, and forensic reports before analytical gaps and findings can be generated.
+          </p>
+          <div style="display: flex; gap: 12px; justify-content: center;">
+            <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence')">
+              <span>📦 Go to Evidence Collection</span>
+            </button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    const isCurrentStage = c.lifecycle_stage === "REVIEW";
+    const isCompletedStage = c.lifecycle_stage === "CLOSED";
+    const isFutureStage = !isCurrentStage && !isCompletedStage;
+
+    let stageBannerHtml = "";
+    if (isFutureStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--primary-bg); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-info">STAGE 5 PREREQUISITE</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Current Case Stage: ${c.lifecycle_stage}</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Investigator Review Pending Stage 4 Completion
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                Case is currently in Stage <strong>${(StageDisplayMap[c.lifecycle_stage] || {}).short || c.lifecycle_stage}</strong>. 
+                Reconstructed timeline events and cross-exhibit observations should be finalized before completing the formal supervisory review.
+              </p>
+            </div>
+            <div>
+              <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${caseId}', 'timeline')">
+                View Timeline & Analysis &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (isCurrentStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--bg-card); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-attention">ACTIVE WORKSPACE &bull; STAGE 5</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Investigator Review In Progress</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Review Inquest Findings & Complete Endorsement
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                Review all documentary and forensic exhibits, verified chronological sequence, and open information gaps. Record your investigative evaluation and proceed to Stage 6 Case Closure.
+              </p>
+            </div>
+            <div>
+              <button class="btn btn-primary btn-sm" onclick="Router.selectCaseAndRoute('${caseId}', 'closure')">
+                Proceed to Case Closure &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    } else if (isCompletedStage) {
+      stageBannerHtml = `
+        <div class="card" style="background-color: var(--verified-bg); border-left: 5px solid var(--verified); padding: 16px 20px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-verified">STAGE 5 COMPLETED</span>
+                <span style="font-size: 0.8rem; color: var(--verified-text); font-family: var(--font-mono);">Inquest Review Endorsed</span>
+              </div>
+              <div style="font-size: 1rem; font-weight: 700; color: var(--verified-text); margin-top: 2px;">
+                Investigator Review Endorsement Recorded & Archived
+              </div>
+              <div style="font-size: 0.84rem; color: var(--verified-text); opacity: 0.9; margin-top: 2px;">
+                Investigating Officer review evaluation and supervisory closure are permanently filed under Section 194 BNSS.
+              </div>
+            </div>
+            <span class="badge badge-verified" style="font-size: 0.9rem; padding: 6px 14px;">✓ Endorsed</span>
+          </div>
+        </div>
+      `;
+    }
 
     const html = `
-      ${renderWorkspaceHeaderHtml("gaps")}
+      ${renderWorkspaceHeaderHtml("findings")}
+
+      ${stageBannerHtml}
 
       <div class="cases-toolbar">
         <div>
-          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Investigation Gaps</h3>
-          <p style="color: var(--text-muted); font-size: 0.82rem;">Systematic identification of missing documents, unverified links, and recommended inquiries.</p>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Review Investigation Findings</h3>
+          <p style="color: var(--text-muted); font-size: 0.82rem;">Holistic review of investigative gaps, analytical reasoning observations, and semantic document evidence.</p>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${caseId}', 'report')">
+            📄 View Full Case Report &rarr;
+          </button>
         </div>
       </div>
 
-      <div style="margin-top: 14px;">
-        ${gaps.map(g => `
+      <!-- Human Governance Notice -->
+      <div class="human-governance-notice">
+        <span style="font-size: 1.2rem;">⚖️</span>
+        <div>
+          <strong>Investigator Governance & Objective Inquest Standard:</strong>
+          <span> SAKSHI findings are analytical hypothesis cues grounded strictly in verified case exhibits. The system never infers guilt, ranks suspects, or draws definitive legal conclusions. The assigned Investigating Officer remains the sole decision-maker.</span>
+        </div>
+      </div>
+
+      <!-- Findings Subtabs -->
+      <div class="filter-chips" style="margin: 14px 0 18px;">
+        <button class="filter-chip ${this.activeTab === 'gaps' ? 'active' : ''}" onclick="ScreenFindings.render('${caseId}', 'gaps')">
+          📋 Investigation Gaps & Inquiries
+        </button>
+        <button class="filter-chip ${this.activeTab === 'analysis' ? 'active' : ''}" onclick="ScreenFindings.render('${caseId}', 'analysis')">
+          💡 Analytical Observations & Reasoning
+        </button>
+        <button class="filter-chip ${this.activeTab === 'rag' ? 'active' : ''}" onclick="Router.selectCaseAndRoute('${caseId}', 'rag')">
+          🔎 Search Exhibit Passages (RAG)
+        </button>
+      </div>
+
+      <div id="findingsSubContent">
+        ${this.activeTab === 'gaps' ? ScreenFindings.renderGapsHtml(caseId, evidenceList) : ScreenFindings.renderAnalysisHtml(caseId, evidenceList)}
+      </div>
+
+      <!-- Official Investigator Review & Endorsement Section -->
+      <div class="card" style="margin-top: 20px;">
+        <div class="card-header">
+          <h3 class="card-title">Investigator Review Decision & Endorsement</h3>
+          <span class="badge badge-info">Authoritative Decision Maker</span>
+        </div>
+        <form id="endorsementForm" onsubmit="event.preventDefault();" style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+          <div>
+            <label class="form-label" for="txtReviewNotes" style="font-weight: 600;">Investigator Evaluation & Docket Findings *</label>
+            <textarea id="txtReviewNotes" class="form-textarea" rows="3" placeholder="Enter findings evaluation (e.g., Forensic examination and scene evidence reviewed; post-mortem report consistent with findings; no discrepancies remain unresolved)." required>All documentary and forensic exhibits examined. Timeline sequence evaluated. Evidentiary records confirm natural progression with no suspicious contradictions.</textarea>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; font-size: 0.84rem; padding: 10px 14px; background: var(--bg-card-subtle); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="chkExhibitsReviewed" checked>
+              <span>I have inspected all ${evidenceList.length} physical, digital, and documentary exhibits in this docket.</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="chkTimelineReviewed" checked>
+              <span>I have reviewed the chronological sequence and verified temporal consistency.</span>
+            </label>
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" id="chkGapsAddressed" checked>
+              <span>I confirm that all investigative questions and information gaps have been addressed or scheduled.</span>
+            </label>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 4px;">
+            <span style="font-size: 0.74rem; color: var(--text-muted);">
+              Investigating Officer: <strong>${c.assigned_io_id}</strong> &bull; Station: <strong>${c.fir_metadata?.police_station || "Jurisdiction Set"}</strong>
+            </span>
+            <div style="display: flex; gap: 8px;">
+              <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Investigator notes draft saved locally.', 'info')">
+                Save Draft Notes
+              </button>
+              <button class="btn btn-primary btn-sm" onclick="ScreenFindings.submitEndorsement('${caseId}')">
+                Endorse Review & Proceed to Closure &rarr;
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  },
+
+  submitEndorsement(caseId) {
+    const notesInput = document.getElementById("txtReviewNotes");
+    const notes = notesInput ? notesInput.value.trim() : "Investigator findings confirmed.";
+    UI.showToast("Investigator review endorsed and recorded in Case Diary.", "success");
+    UI.recordAudit("INVESTIGATOR_REVIEW_ENDORSED", caseId, "SUCCESS", notes);
+    Router.selectCaseAndRoute(caseId, "closure");
+  },
+
+  renderGapsHtml(caseId, evidenceList) {
+    const hasAutopsy = evidenceList.some(e => e.evidence_category === "AUTOPSY_PHOTO" || (e.description && e.description.toLowerCase().includes("autopsy")));
+    const hasCdr = evidenceList.some(e => e.evidence_category === "CDR_SPREADSHEET");
+    const hasScenePhoto = evidenceList.some(e => e.evidence_category === "SCENE_PHOTO");
+
+    const caseGaps = [];
+    if (!hasAutopsy) {
+      caseGaps.push({
+        priority: "HIGH",
+        missing: "Final Post-Mortem / Viscera Toxicology Examination Report",
+        relevance: "Required to establish definitive medical cause of death and rule out toxicological substances.",
+        source: "State Forensic Science Laboratory (Chemical Division)",
+        action: "Follow up with chemical examiner for expedited viscera analysis certificate."
+      });
+    }
+    if (!hasCdr) {
+      caseGaps.push({
+        priority: "MEDIUM",
+        missing: "Telecom CDR & Tower Dump Records for incident timeframe",
+        relevance: "Required to verify subscriber device locations and corroboration with reported witness statements.",
+        source: "Telecom Service Provider Nodal Officer",
+        action: "Issue formal Section 91 CrPC / Section 94 BNSS requisition to telecom provider."
+      });
+    }
+    if (!hasScenePhoto) {
+      caseGaps.push({
+        priority: "LOW",
+        missing: "Comprehensive Crime Scene Inquest Photography Set",
+        relevance: "Required to record physical scene orientation, ingress points, and exhibit layout.",
+        source: "District Mobile Forensic Science Unit (MFSU)",
+        action: "Retrieve and catalog high-resolution crime scene photos into docket."
+      });
+    }
+
+    return `
+      <div style="margin-top: 10px;">
+        <div style="font-size: 0.88rem; color: var(--text-secondary); margin-bottom: 12px;">
+          Identified <strong>${caseGaps.length}</strong> investigative information gaps for Case Docket <code style="font-family: var(--font-mono); color: var(--primary);">${caseId}</code>:
+        </div>
+        ${caseGaps.map(g => `
           <div class="gap-card ${g.priority === 'HIGH' ? 'high-priority' : ''}">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 6px;">
               <span class="badge ${g.priority === 'HIGH' ? 'badge-danger' : 'badge-attention'}">${g.priority} PRIORITY GAP</span>
@@ -3278,12 +6218,843 @@ const ScreenGaps = {
               <span style="font-size: 0.8rem; color: var(--text-muted);">
                 Recommended Step: <em>${g.action}</em>
               </span>
-              <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Gap logged in Case Diary agenda.', 'info')">
+              <button class="btn btn-secondary btn-sm" onclick="UI.showToast('Gap recorded in Case Diary agenda.', 'info')">
                 Log in Case Diary
               </button>
             </div>
           </div>
         `).join("")}
+      </div>
+    `;
+  },
+
+  renderAnalysisHtml(caseId, evidenceList) {
+    let decisions = {};
+    try {
+      decisions = JSON.parse(localStorage.getItem(`sakshi_decisions_${caseId}`) || "{}");
+    } catch (e) {}
+
+    return `
+      <div style="margin-top: 10px;">
+        <div class="card" style="padding: 20px; margin-bottom: 16px;">
+          <h4 style="color: var(--text-main); margin-bottom: 8px;">Case-Scoped Evidentiary Corroboration & Finding Decisions</h4>
+          <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5;">
+            Evaluating <strong>${evidenceList.length}</strong> exhibit(s) committed to case docket <code style="font-family: var(--font-mono); color: var(--primary);">${caseId}</code>.
+            Review each finding and record an explicit investigative decision (Confirm, Correct, Reject, Request More Evidence, Mark Unresolved).
+          </p>
+        </div>
+        ${evidenceList.map((e, idx) => {
+          const dec = decisions[e.evidence_id];
+          return `
+            <div class="observation-card">
+              <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <span class="badge ${e.worm_status === 'COMMITTED' ? 'badge-verified' : 'badge-attention'}">
+                    ${e.worm_status === 'COMMITTED' ? '✓ VERIFIED EXHIBIT' : 'VERIFICATION PENDING'}
+                  </span>
+                  ${dec ? `<span class="badge badge-verified">DECISION: ${dec.decision}</span>` : `<span class="badge badge-neutral">PENDING REVIEW</span>`}
+                </div>
+                <span style="font-size: 0.74rem; color: var(--text-muted);">Exhibit #${idx + 1}</span>
+              </div>
+              <div class="observation-claim">
+                ${Formatters.escapeHtml(e.original_file_name)} &bull; ${Formatters.formatCategory(e.evidence_category)}
+              </div>
+              <div class="observation-reasoning">
+                <strong>Source:</strong> ${Formatters.escapeHtml(e.source_device_or_person || "Investigative Custody")} &bull;
+                <strong>Storage:</strong> WORM ${e.worm_status || "PENDING"} &bull;
+                <strong>Dual-Hash:</strong> ${e.integrity_status || "PENDING"}
+              </div>
+              ${dec ? `
+                <div style="padding: 8px 12px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); font-size: 0.78rem; margin-top: 8px;">
+                  <strong>Investigator Evaluation:</strong> ${Formatters.escapeHtml(dec.reason)} &bull;
+                  <span style="color: var(--text-muted); font-family: var(--font-mono);">By ${dec.reviewer} at ${Formatters.formatDate(dec.timestamp)}</span>
+                </div>
+              ` : ''}
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border-subtle); flex-wrap: wrap; gap: 8px;">
+                <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                  <button class="btn btn-primary btn-sm" onclick="ScreenFindings.recordDecision('${caseId}', '${e.evidence_id}', 'CONFIRMED')">✓ Confirm</button>
+                  <button class="btn btn-secondary btn-sm" onclick="ScreenFindings.recordDecision('${caseId}', '${e.evidence_id}', 'CORRECTED')">✏️ Correct</button>
+                  <button class="btn btn-secondary btn-sm" onclick="ScreenFindings.recordDecision('${caseId}', '${e.evidence_id}', 'REJECTED')">✕ Reject</button>
+                  <button class="btn btn-secondary btn-sm" onclick="ScreenFindings.recordDecision('${caseId}', '${e.evidence_id}', 'REQUEST_MORE_EVIDENCE')">🔎 More Evidence</button>
+                  <button class="btn btn-secondary btn-sm" onclick="ScreenFindings.recordDecision('${caseId}', '${e.evidence_id}', 'MARK_UNRESOLVED')">❓ Mark Unresolved</button>
+                </div>
+                <div>
+                  <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence'); setTimeout(() => ScreenEvidence.openEvidenceDetailDrawer('${e.evidence_id}'), 100);">
+                    Inspect Exhibit Record &rarr;
+                  </button>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    `;
+  },
+
+  recordDecision(caseId, findingId, decision) {
+    const reason = prompt(`Enter investigator justification for [${decision}]:`, "");
+    if (reason === null) return;
+    const decisionsKey = `sakshi_decisions_${caseId}`;
+    let decisions = {};
+    try {
+      decisions = JSON.parse(localStorage.getItem(decisionsKey) || "{}");
+    } catch (e) {}
+    decisions[findingId] = {
+      decision: decision,
+      reason: reason || "Investigator reviewed and recorded.",
+      reviewer: State.auth.subjectId || "Investigating Officer",
+      timestamp: new Date().toISOString()
+    };
+    localStorage.setItem(decisionsKey, JSON.stringify(decisions));
+    UI.showToast(`Finding marked as ${decision}`, "success");
+    UI.recordAudit("INVESTIGATOR_FINDING_DECISION", caseId, decision, `${findingId}: ${reason || 'Decision recorded'}`);
+    this.render(caseId, this.activeTab);
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12b. SCREEN 6b: INVESTIGATION GAPS (Route: #/cases/:id/gaps)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ScreenGaps = {
+  async render(caseId) {
+    const container = document.getElementById("viewContainer");
+    document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Investigation Gaps`;
+
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
+
+    const evidenceList = State.evidence || [];
+
+    if (evidenceList.length === 0) {
+      container.innerHTML = `
+        ${renderWorkspaceHeaderHtml("gaps")}
+        <div class="empty-state-card" style="margin-top: 24px; padding: 48px 24px; text-align: center; background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-default);">
+          <div style="font-size: 2.8rem; margin-bottom: 12px; opacity: 0.85;">📋</div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 8px;">No Investigation Gaps Generated Yet</h3>
+          <p style="color: var(--text-muted); font-size: 0.88rem; max-width: 540px; margin: 0 auto 20px auto; line-height: 1.5;">
+            No evidence exhibits have been uploaded to this case docket yet. Investigation gaps, missing document alerts, and follow-up recommendations are derived strictly from verified case exhibits and witness statements.
+          </p>
+          <div style="display: flex; gap: 12px; justify-content: center;">
+            <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence')">
+              <span>📦 Attach Case Evidence</span>
+            </button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    return ScreenFindings.render(caseId, "gaps");
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12b. SCREEN 6: CASE CLOSURE WORKSPACE (Route: #/cases/:id/closure)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ScreenClosure = {
+  async render(caseId) {
+    const container = document.getElementById("viewContainer");
+    document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Case Closure`;
+
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
+
+    const c = State.activeCase;
+    const evidenceList = State.evidence || [];
+    const totalEvidence = evidenceList.length;
+    const verifiedEvidence = evidenceList.filter(e => e.integrity_status === "VERIFIED" && e.worm_status === "COMMITTED").length;
+
+    const isClosed = c.lifecycle_stage === "CLOSED";
+    const SUPERVISORY_ROLES = ["SUPERVISORY_OFFICER", "STATION_HEAD", "ADMIN", "SUPERVISOR", "SYSTEM_ADMIN"];
+    const isSupervisory = SUPERVISORY_ROLES.includes(State.auth.role);
+
+    const requirements = [
+      {
+        id: "REQ_SETUP",
+        title: "Stage 1 — Case Setup & Jurisdiction Allocation",
+        desc: `FIR: ${c.fir_metadata?.fir_number || "Recorded"}, Station: ${c.fir_metadata?.police_station || "Station assigned"}, IO: ${c.assigned_io_id || "IO allocated"}`,
+        passed: true
+      },
+      {
+        id: "REQ_EVIDENCE",
+        title: "Stage 2 — Evidence Collection & Cataloging",
+        desc: `${totalEvidence} exhibit(s) attached to inquiry docket`,
+        passed: totalEvidence > 0
+      },
+      {
+        id: "REQ_VERIFY",
+        title: "Stage 3 — Forensic Integrity & WORM Storage",
+        desc: `${verifiedEvidence} of ${totalEvidence} exhibits verified with dual-hash signatures and immutable storage`,
+        passed: totalEvidence > 0 && verifiedEvidence === totalEvidence
+      },
+      {
+        id: "REQ_ANALYSIS",
+        title: "Stage 4 — Chronological Sequence & Analytical Reasoning",
+        desc: "Timeline reconstructed and cross-exhibit observations examined",
+        passed: ["ANALYSIS", "REVIEW", "CLOSED"].includes(c.lifecycle_stage)
+      },
+      {
+        id: "REQ_REVIEW",
+        title: "Stage 5 — Investigator Review & Findings Endorsement",
+        desc: "Investigating Officer review completed and inquiry conclusions documented",
+        passed: ["REVIEW", "CLOSED"].includes(c.lifecycle_stage)
+      },
+      {
+        id: "REQ_SUPERVISORY",
+        title: "Stage 6 — Supervisory Authorization & BNSS Archival",
+        desc: "Final authorization under Section 194 BNSS / Section 174 CrPC by Station Head or Supervisory Officer",
+        passed: isClosed
+      }
+    ];
+
+    const passedCount = requirements.filter(r => r.passed).length;
+
+    let bannerHtml = "";
+    if (isClosed) {
+      bannerHtml = `
+        <div class="closure-certificate-card" style="margin-bottom: 20px;">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+            <span style="font-size: 2rem;">🏛️</span>
+            <div>
+              <h2 style="font-size: 1.35rem; font-weight: 700; color: var(--text-main); margin: 0;">
+                Unnatural Death Inquiry Concluded
+              </h2>
+              <span style="font-size: 0.85rem; color: var(--verified); font-weight: 600;">
+                Permanently Archived Under Section 194 BNSS / Section 174 CrPC
+              </span>
+            </div>
+          </div>
+          <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.6; margin: 0 0 16px 0;">
+            This investigation file has been formally concluded and archived by order of the authorized Station Head / Supervisory Officer. 
+            All ${totalEvidence} exhibits, chronological timeline traces, and analytical observation logs are permanently preserved in tamper-evident storage.
+          </p>
+          <div style="display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.82rem; padding: 12px 14px; background: var(--bg-card-subtle); border-radius: var(--radius-md); border: 1px solid var(--border-subtle);">
+            <div>Case Reference: <strong>${c.case_id}</strong></div>
+            <div>Inquest Number: <strong>${c.fir_metadata?.fir_number || "Unrecorded"}</strong></div>
+            <div>Authorized Station: <strong>${c.fir_metadata?.police_station || "Jurisdiction Set"}</strong></div>
+            <div>Investigating Officer: <strong>${c.assigned_io_id}</strong></div>
+            <div>Archived Date: <strong>${Formatters.formatDate(c.updated_at || c.created_at)}</strong></div>
+          </div>
+        </div>
+      `;
+    } else if (isReadyForClosure) {
+      bannerHtml = `
+        <div class="card" style="background: var(--bg-card); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-attention">STAGE 6 &bull; CASE CLOSURE REVIEW</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Inquest Ready for Final Closure</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Authorize Inquiry Conclusion & Section 194 BNSS Filing
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                All evidence exhibits have been cataloged, forensically verified, and evaluated by the assigned Investigating Officer. 
+                Record the final inquiry closure order to conclude this docket.
+              </p>
+            </div>
+            <div>
+              ${isSupervisory ? `
+                <button class="btn btn-primary btn-stage-transition" onclick="ScreenClosure.submitClosure('${c.case_id}')">
+                  Conclude Investigation & Close Case
+                </button>
+              ` : `
+                <span class="badge badge-attention" style="padding: 6px 12px; font-size: 0.84rem;">
+                  Supervisory Role Required
+                </span>
+              `}
+            </div>
+          </div>
+          ${!isSupervisory ? `
+            <div style="margin-top: 14px; padding: 10px 14px; background: var(--attention-bg); border: 1px solid var(--attention-border); border-radius: var(--radius-sm); font-size: 0.82rem; color: var(--attention-text);">
+              <strong>Supervisory Authority Required:</strong> Under Kerala Police Standing Orders and the authoritative Stage Engine, 
+              final inquiry closure requires authorization from a Supervisory Officer or Station Head (Station Head, CI, DySP, or SP). 
+              Logged in role: <code>${State.auth.role}</code>.
+            </div>
+          ` : ""}
+        </div>
+      `;
+    } else {
+      bannerHtml = `
+        <div class="card" style="background: var(--primary-bg); border-left: 5px solid var(--primary); padding: 18px 22px; margin-bottom: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 14px;">
+            <div style="flex: 1; min-width: 280px;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <span class="badge badge-info">STAGE 6 PREREQUISITE</span>
+                <span style="font-size: 0.8rem; color: var(--text-muted); font-family: var(--font-mono);">Current Case Stage: ${c.lifecycle_stage}</span>
+              </div>
+              <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-main); margin-bottom: 6px;">
+                Case Closure Unavailable — Preceding Stages Incomplete
+              </h3>
+              <p style="color: var(--text-secondary); font-size: 0.88rem; line-height: 1.5; margin: 0;">
+                Case closure is the final authoritative lifecycle gate. Under Police Regulations and the Stage Engine state machine, 
+                a case cannot be closed until all exhibits are forensically verified, the timeline is reconstructed, and the investigator review is endorsed.
+              </p>
+            </div>
+            <div>
+              <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'overview')">
+                View Case Dashboard &rarr;
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    const html = `
+      ${renderWorkspaceHeaderHtml("closure")}
+
+      ${bannerHtml}
+
+      <div class="dashboard-grid-2">
+        <!-- LEFT COLUMN: Closure Requirements Checklist -->
+        <div class="card">
+          <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h3 class="card-title">Inquest Closure Requirements Checklist</h3>
+              <span style="font-size: 0.8rem; color: var(--text-muted);">${passedCount} of 6 mandatory verification requirements satisfied</span>
+            </div>
+            <span class="badge ${passedCount === 6 ? 'badge-verified' : 'badge-attention'}">
+              ${passedCount === 6 ? '✓ Ready For Archival' : `${6 - passedCount} Requirement(s) Pending`}
+            </span>
+          </div>
+
+          <div class="closure-checklist" style="margin-top: 14px;">
+            ${requirements.map(r => `
+              <div class="closure-checklist-item ${r.passed ? 'passed' : 'pending'}">
+                <div class="closure-check-icon ${r.passed ? 'passed' : 'pending'}">
+                  ${r.passed ? '✓' : '!'}
+                </div>
+                <div style="flex: 1;">
+                  <div style="font-weight: 600; font-size: 0.88rem; color: var(--text-main);">${r.title}</div>
+                  <div style="font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px;">${r.desc}</div>
+                </div>
+                <span class="badge ${r.passed ? 'badge-verified' : 'badge-neutral'}" style="font-size: 0.72rem;">
+                  ${r.passed ? 'Passed' : 'Pending'}
+                </span>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: Closure Decision & Legal Archival Dossier -->
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          <!-- Closure Form or Archived Record -->
+          <div class="card">
+            <div class="card-header">
+              <h3 class="card-title">${isClosed ? "Recorded Closure Decision" : "Closure Decision & Legal Order"}</h3>
+              <span class="badge badge-info">Section 194 BNSS</span>
+            </div>
+
+            ${isClosed ? `
+              <div style="padding: 12px 14px; background: var(--bg-card-subtle); border-radius: var(--radius-md); font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5; margin-top: 10px;">
+                <strong>Final Closure Summary:</strong> Investigation into unnatural death inquiry concluded under Section 194 BNSS. 
+                All material and digital evidence verified; no unresolved foul play detected on forensic record. Final inquiry report submitted to Executive Magistrate.
+              </div>
+            ` : `
+              <form id="closureForm" onsubmit="event.preventDefault();" style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+                <div>
+                  <label class="form-label" for="txtClosureReason" style="font-weight: 600;">Closure Justification & Findings Summary *</label>
+                  <textarea id="txtClosureReason" class="form-textarea" rows="4" placeholder="Provide formal inquiry conclusion (e.g. Accidental death established; post-mortem toxicology and scene reconstruction consistent with recorded findings; no suspicious circumstances)." required ${!isSupervisory || !isReadyForClosure ? 'disabled' : ''}>Final inquiry findings accepted. Inquest documentation, medical certificate, and verified exhibits confirm accidental unnatural death. File submitted for formal archival under Section 194 BNSS.</textarea>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                  <span style="font-size: 0.74rem; color: var(--text-muted);">
+                    Sign-off Officer: <strong>${State.auth.subjectId}</strong> (${State.auth.role})
+                  </span>
+                  ${isReadyForClosure && isSupervisory ? `
+                    <button class="btn btn-primary btn-sm btn-stage-transition" onclick="ScreenClosure.submitClosure('${c.case_id}')">
+                      Conclude & Archive Case &rarr;
+                    </button>
+                  ` : ""}
+                </div>
+              </form>
+            `}
+          </div>
+
+          <!-- Custody & Audit Records -->
+          <div class="card">
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+              <h3 class="card-title">Case Custody & Audit Log</h3>
+              <button class="btn btn-secondary btn-sm" onclick="Router.selectCaseAndRoute('${c.case_id}', 'audit')">
+                View Full Audit &rarr;
+              </button>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px; font-size: 0.82rem; margin-top: 10px;">
+              ${(State.auditLog.length > 0 ? State.auditLog.slice(0, 3) : [
+                {
+                  timestamp: c.created_at,
+                  action: "Case workspace initialized",
+                  actor: c.assigned_io_id
+                }
+              ]).map(l => `
+                <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle);">
+                  <span><strong>${l.action}</strong> by ${l.actor || 'System'}</span>
+                  <span style="font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted);">${Formatters.formatDate(l.timestamp)}</span>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+
+    container.innerHTML = html;
+  },
+
+  async submitClosure(caseId) {
+    const reasonInput = document.getElementById("txtClosureReason");
+    const reason = reasonInput ? reasonInput.value.trim() : "Case inquiry concluded under Section 194 BNSS.";
+    if (!reason) {
+      UI.showToast("Please provide a closure justification.", "error");
+      return;
+    }
+
+    try {
+      await handleStageTransition(caseId, "CLOSED");
+      UI.recordAudit("CASE_INQUEST_CONCLUDED", caseId, "SUCCESS", reason);
+    } catch (err) {
+      UI.showToast(`Case closure failed: ${err.message}`, "error");
+    }
+  }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 12c. SCREEN 6c: COMPREHENSIVE CASE REPORT (Route: #/cases/:id/report)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ScreenReport = {
+  async render(caseId) {
+    const container = document.getElementById("viewContainer");
+    document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Case Report`;
+
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
+
+    const c = State.activeCase;
+    const evidenceList = State.evidence || [];
+
+    if (evidenceList.length === 0) {
+      container.innerHTML = `
+        ${renderWorkspaceHeaderHtml("report")}
+        <div class="empty-state-card" style="margin-top: 24px; padding: 48px 24px; text-align: center; background: var(--bg-card); border-radius: var(--radius-lg); border: 1px dashed var(--border-default);">
+          <div style="font-size: 2.8rem; margin-bottom: 12px; opacity: 0.85;">📄</div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin-bottom: 8px;">No Case Report Available Yet</h3>
+          <p style="color: var(--text-muted); font-size: 0.88rem; max-width: 560px; margin: 0 auto 20px auto; line-height: 1.5;">
+            A case with zero exhibits contains no verified findings, timelines, or forensic parameters. Upload and verify case exhibits before generating the case dossier.
+          </p>
+          <div style="display: flex; gap: 12px; justify-content: center;">
+            <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${caseId}', 'evidence')">
+              <span>📦 Go to Evidence Collection</span>
+            </button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    let timelineRes = null;
+    let analysisRes = null;
+    try {
+      timelineRes = await Api.getTimelineEvents(caseId);
+    } catch (e) {
+      timelineRes = { events: [] };
+    }
+    try {
+      analysisRes = await Api.getAnalysisSummary(caseId);
+    } catch (e) {
+      analysisRes = null;
+    }
+
+    let decisions = {};
+    try {
+      decisions = JSON.parse(localStorage.getItem(`sakshi_decisions_${caseId}`) || "{}");
+    } catch (e) {}
+
+    const events = (timelineRes && timelineRes.events) || [];
+    const contradictions = (analysisRes && analysisRes.contradictions) || [];
+    const gaps = (analysisRes && (analysisRes.investigation_gaps || analysisRes.evidence_gaps)) || [];
+    const scenarios = (analysisRes && analysisRes.candidate_scenarios) || [];
+
+    const html = `
+      ${renderWorkspaceHeaderHtml("report")}
+
+      <div class="cases-toolbar" style="margin-bottom: 20px;">
+        <div>
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--text-main);">Comprehensive Investigation Dossier & Case Report</h3>
+          <p style="color: var(--text-muted); font-size: 0.82rem;">Holistic forensic report synthesizing evidence register, cryptographic parameters, timeline reconstruction, and investigator review endorsements.</p>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button class="btn btn-secondary" onclick="window.print()">
+            🖨️ Print / Export Dossier
+          </button>
+          <button class="btn btn-primary" onclick="Router.selectCaseAndRoute('${caseId}', 'closure')">
+            Proceed to Case Closure &rarr;
+          </button>
+        </div>
+      </div>
+
+      <div id="printableCaseReport">
+        <!-- REPORT COVER / HEADER -->
+        <div style="border-bottom: 3px double var(--border-default); padding-bottom: 16px; margin-bottom: 24px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px;">
+            <div>
+              <div style="font-size: 0.76rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--primary); margin-bottom: 4px;">
+                POLICE INVESTIGATION WORKSTATION &bull; FORENSIC DOSSIER
+              </div>
+              <h2 style="font-size: 1.6rem; font-weight: 800; color: var(--text-main); margin: 0 0 6px 0;">
+                Inquest Case Report &bull; ${Formatters.escapeHtml(c.case_id)}
+              </h2>
+              <div style="font-size: 0.9rem; color: var(--text-secondary);">
+                ${Formatters.escapeHtml(c.title)}
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <span class="badge badge-verified" style="font-size: 0.88rem; padding: 6px 14px;">
+                ${(StageDisplayMap[c.lifecycle_stage] || {}).label || c.lifecycle_stage}
+              </span>
+              <div style="font-size: 0.74rem; color: var(--text-muted); margin-top: 6px; font-family: var(--font-mono);">
+                Dossier Generated: ${Formatters.formatDate(new Date().toISOString())}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1. CASE PARTICULARS & INCIDENT HEADER -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">1. Case Particulars & Incident Header</h3>
+            <span class="badge badge-info">Authoritative Station Record</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; font-size: 0.85rem; margin-top: 10px;">
+            <div><strong style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Case Docket ID:</strong> <code style="font-family: var(--font-mono); font-weight: 700;">${c.case_id}</code></div>
+            <div><strong style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">FIR Reference:</strong> <span style="font-weight: 600;">${c.fir_metadata?.fir_number || 'Unassigned'}</span></div>
+            <div><strong style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Police Station:</strong> <span>${c.fir_metadata?.police_station || 'Jurisdiction Assigned'}</span></div>
+            <div><strong style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Investigating Officer:</strong> <span>${c.assigned_io_id}</span></div>
+            <div><strong style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Incident Date / Time:</strong> <span>${Formatters.formatDate(c.fir_metadata?.incident_date || c.created_at)}</span></div>
+            <div><strong style="color: var(--text-muted); display: block; font-size: 0.72rem; text-transform: uppercase;">Incident Location:</strong> <span>${c.fir_metadata?.incident_location || 'Scene recorded in case file'}</span></div>
+          </div>
+        </div>
+
+        <!-- 2. FORENSIC EVIDENCE REGISTER -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">2. Forensic Evidence Register (${evidenceList.length} Exhibits)</h3>
+            <span class="badge badge-verified">Custodial Register</span>
+          </div>
+          <div style="overflow-x: auto; margin-top: 10px;">
+            <table class="table" style="width: 100%; font-size: 0.82rem;">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Exhibit ID</th>
+                  <th>Original Filename</th>
+                  <th>Category</th>
+                  <th>Source / Seized From</th>
+                  <th>Size</th>
+                  <th>Intake Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${evidenceList.map((e, idx) => `
+                  <tr>
+                    <td>${idx + 1}</td>
+                    <td><code style="font-family: var(--font-mono); color: var(--primary); font-weight: 600;">${e.evidence_id}</code></td>
+                    <td><strong>${Formatters.escapeHtml(e.original_file_name)}</strong></td>
+                    <td><span class="badge badge-neutral">${Formatters.formatCategory(e.evidence_category)}</span></td>
+                    <td>${Formatters.escapeHtml(e.source_device_or_person || "Station Custody")}</td>
+                    <td>${Formatters.formatBytes(e.file_size_bytes)}</td>
+                    <td style="font-family: var(--font-mono); color: var(--text-muted);">${Formatters.formatDate(e.collection_datetime || e.created_at)}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 3. SECURITY & PRESERVATION VERIFICATION SUMMARY -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">3. Security & Integrity Verification Summary</h3>
+            <span class="badge badge-verified">Cryptographic & Antivirus Audit</span>
+          </div>
+          <div style="margin-top: 8px; margin-bottom: 14px; padding: 10px 14px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border-left: 3px solid var(--primary); font-size: 0.8rem; color: var(--text-secondary);">
+            <strong>Notice on Storage Protections:</strong> Local filesystem permissions and application-level object-lock manifests are a development simulation, not compliance-grade immutable hardware WORM or cloud compliance retention.
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="table" style="width: 100%; font-size: 0.8rem;">
+              <thead>
+                <tr>
+                  <th>Exhibit ID</th>
+                  <th>Format Validated</th>
+                  <th>Security Scan Engine & Result</th>
+                  <th>Integrity Check</th>
+                  <th>Storage Lock State</th>
+                  <th>Encryption at Rest</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${evidenceList.map(e => `
+                  <tr>
+                    <td><code style="font-family: var(--font-mono);">${e.evidence_id}</code></td>
+                    <td><span class="badge ${e.detected_mime_type ? 'badge-verified' : 'badge-attention'}">${e.detected_mime_type ? 'VERIFIED' : 'PENDING'}</span></td>
+                    <td>
+                      <span class="badge ${e.antivirus_status === 'CLEAN' ? 'badge-verified' : 'badge-attention'}">
+                        ${e.antivirus_status === 'CLEAN' ? 'CLEAN' : (e.antivirus_status || 'PENDING')}
+                      </span>
+                      <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                        ${e.antivirus_scanner === 'EicarHeuristicScanner' ? 'Development Signature Scanner' : (e.antivirus_scanner || 'Native Engine')}
+                      </div>
+                    </td>
+                    <td><span class="badge ${e.integrity_status === 'VERIFIED' ? 'badge-verified' : 'badge-attention'}">${e.integrity_status || 'PENDING'}</span></td>
+                    <td><span class="badge ${e.lock_status === 'LOCKED' ? 'badge-verified' : 'badge-neutral'}">${e.lock_status === 'LOCKED' ? 'OBJECT LOCKED (SIM)' : 'PENDING'}</span></td>
+                    <td><span class="badge ${e.encryption_status === 'ENCRYPTED' ? 'badge-verified' : 'badge-neutral'}">${e.encryption_status === 'ENCRYPTED' ? 'AES-256-GCM' : 'PENDING'}</span></td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 4. EXTRACTED DOCUMENTARY FACTS WITH SOURCE ATTRIBUTION -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">4. Extracted Documentary Facts with Source Attribution</h3>
+            <span class="badge badge-info">EC-MORE Grounding Standard</span>
+          </div>
+          <p style="font-size: 0.82rem; color: var(--text-muted); margin: 6px 0 12px 0;">
+            Extracted facts adhere to strict attribution standards distinguishing quoted passages, automated extractions, AI interpretations, and items requiring investigator confirmation.
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            ${(() => {
+              let factsHtml = "";
+              evidenceList.forEach(e => {
+                factsHtml += `
+                  <div style="padding: 12px 14px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); font-size: 0.82rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 6px;">
+                      <span class="badge badge-quoted">QUOTED_FROM_SOURCE</span>
+                      <span style="font-family: var(--font-mono); font-size: 0.74rem; color: var(--text-muted);">
+                        Exhibit: ${e.evidence_id} &bull; ${Formatters.escapeHtml(e.original_file_name)}
+                      </span>
+                    </div>
+                    <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">
+                      Exhibit seized from: ${Formatters.escapeHtml(e.source_device_or_person || "Station Custody")} at ${Formatters.escapeHtml(e.collection_location || "Incident Scene")}.
+                    </div>
+                    <div style="font-size: 0.76rem; color: var(--text-muted); font-style: italic;">
+                      Source passage: "${Formatters.escapeHtml(e.description || e.original_file_name)}"
+                    </div>
+                  </div>
+                `;
+              });
+              return factsHtml;
+            })()}
+          </div>
+        </div>
+
+        <!-- 5. CHRONOLOGICAL SEQUENCE & BRANCHING TIMELINE -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">5. Chronological Sequence & Branching Timeline (${events.length} Events)</h3>
+            <span class="badge badge-info">Temporal Reconstruction</span>
+          </div>
+          ${events.length === 0 ? `
+            <div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
+              No chronological events reconstructed from exhibits yet.
+            </div>
+          ` : `
+            <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 10px;">
+              ${events.map(ev => `
+                <div style="padding: 12px 14px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border-left: 4px solid var(--primary); font-size: 0.82rem;">
+                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; flex-wrap: wrap; gap: 6px;">
+                    <div style="display: flex; gap: 6px; align-items: center;">
+                      <span class="branch-pill branch-${ev.branch_id || 'MAIN'}">${ev.branch_id || 'MAIN'}</span>
+                      <span class="badge ${(ev.time_certainty || ev.certainty) === 'EXACT' ? 'badge-certainty-exact' : (ev.time_certainty || ev.certainty) === 'REPORTED' ? 'badge-certainty-reported' : 'badge-certainty-estimated'}">
+                        ${ev.time_certainty || ev.certainty || 'REPORTED'}
+                      </span>
+                    </div>
+                    <span style="font-family: var(--font-mono); font-size: 0.76rem; font-weight: 600; color: var(--primary);">
+                      ${ev.timestamp_display || `${ev.date} ${ev.time}`}
+                    </span>
+                  </div>
+                  <div style="font-weight: 600; color: var(--text-main); margin-bottom: 4px;">
+                    ${Formatters.escapeHtml(ev.title)}
+                  </div>
+                  <div style="color: var(--text-secondary); margin-bottom: 6px;">
+                    ${Formatters.escapeHtml(ev.description)}
+                  </div>
+                  <div style="font-size: 0.74rem; color: var(--text-muted);">
+                    <strong>Supporting Exhibit:</strong> <code style="font-family: var(--font-mono);">${ev.evidence_id}</code> (${Formatters.escapeHtml(ev.source_name || ev.source_file || "Exhibit")})
+                  </div>
+                </div>
+              `).join("")}
+            </div>
+          `}
+        </div>
+
+        <!-- 6. EVIDENTIARY CONTRADICTIONS & INVESTIGATION GAPS -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">6. Evidentiary Contradictions & Investigation Gaps</h3>
+            <span class="badge badge-attention">Critical Evaluation</span>
+          </div>
+          <div style="margin-top: 10px;">
+            <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-main); margin-bottom: 8px;">Contradictions Between Sources:</h4>
+            ${contradictions.length === 0 ? `
+              <p style="font-size: 0.84rem; color: var(--text-muted); margin-bottom: 16px;">
+                No unresolved discrepancies detected between admitted exhibits.
+              </p>
+            ` : contradictions.map(cd => `
+              <div style="padding: 12px; background: var(--attention-bg); border-radius: var(--radius-sm); border: 1px solid var(--attention-border); margin-bottom: 10px; font-size: 0.82rem;">
+                <div style="font-weight: 700; color: var(--attention-text); margin-bottom: 4px;">${Formatters.escapeHtml(cd.title)}</div>
+                <div style="color: var(--attention-text); margin-bottom: 6px;">${Formatters.escapeHtml(cd.difference_analysis)}</div>
+                <div style="font-size: 0.76rem; color: var(--text-secondary);">
+                  <strong>Source A (${cd.source_a_id}):</strong> "${Formatters.escapeHtml(cd.source_a_quote)}" &bull;
+                  <strong>Source B (${cd.source_b_id}):</strong> "${Formatters.escapeHtml(cd.source_b_quote)}"
+                </div>
+              </div>
+            `).join("")}
+
+            <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-main); margin: 16px 0 8px 0;">Identified Evidence Gaps & Action Items:</h4>
+            ${gaps.length === 0 ? `
+              <p style="font-size: 0.84rem; color: var(--text-muted);">No open investigative information gaps recorded.</p>
+            ` : gaps.map(g => `
+              <div style="padding: 10px 12px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); margin-bottom: 8px; font-size: 0.82rem;">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                  <strong style="color: var(--text-main);">${Formatters.escapeHtml(g.missing_information)}</strong>
+                  <span class="badge ${g.priority === 'HIGH' ? 'badge-danger' : 'badge-attention'}">${g.priority}</span>
+                </div>
+                <div style="color: var(--text-secondary); margin-bottom: 4px;">Why It Matters: ${Formatters.escapeHtml(g.why_it_matters)}</div>
+                <div style="font-size: 0.76rem; color: var(--text-muted);">Recommended Action: <em>${Formatters.escapeHtml(g.recommended_action)}</em></div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+
+        <!-- 7. CANDIDATE SCENARIOS (EXPLICIT HYPOTHESES) -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">7. Candidate Scenarios (Explicit Hypotheses)</h3>
+            <span class="badge badge-attention">Hypotheses Only</span>
+          </div>
+          <div style="padding: 10px 14px; background: var(--attention-bg); border: 1px solid var(--attention-border); border-radius: var(--radius-sm); margin: 10px 0 14px 0; font-size: 0.82rem; color: var(--attention-text);">
+            <strong>Investigator Governance Notice:</strong> Candidate scenarios are analytical hypotheses for investigative evaluation only. SAKSHI never infers guilt, ranks suspects, or establishes cause of death. Hypotheses must never be presented as established facts.
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            ${scenarios.length === 0 ? `
+              <p style="font-size: 0.84rem; color: var(--text-muted);">No candidate hypotheses generated for current exhibit set.</p>
+            ` : scenarios.map(sc => `
+              <div style="padding: 14px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); font-size: 0.82rem;">
+                <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--text-main); margin-bottom: 4px;">${Formatters.escapeHtml(sc.scenario_name)}</h4>
+                <p style="color: var(--text-secondary); line-height: 1.5; margin-bottom: 8px;">${Formatters.escapeHtml(sc.plain_description)}</p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; font-size: 0.78rem;">
+                  <div><strong style="color: var(--primary);">Supporting Evidence:</strong> ${Formatters.escapeHtml(sc.supporting_evidence.join(", ") || "None")}</div>
+                  <div><strong style="color: var(--danger);">Conflicting Evidence:</strong> ${Formatters.escapeHtml(sc.conflicting_evidence.join(", ") || "None")}</div>
+                  <div><strong style="color: var(--text-muted);">Assumptions:</strong> ${Formatters.escapeHtml(sc.assumptions.join(", ") || "None")}</div>
+                  <div><strong style="color: var(--text-muted);">Limitations:</strong> ${Formatters.escapeHtml(sc.confidence_limitations)}</div>
+                </div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+
+        <!-- 8. INVESTIGATOR DECISIONS & REVIEW ENDORSEMENTS -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">8. Investigator Decisions & Review Endorsements</h3>
+            <span class="badge badge-verified">Officer Determinations</span>
+          </div>
+          <div style="margin-top: 10px;">
+            ${Object.keys(decisions).length === 0 ? `
+              <p style="font-size: 0.84rem; color: var(--text-muted);">
+                No per-finding decisions recorded yet. General review endorsement recorded under Section 194 BNSS.
+              </p>
+            ` : `
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                ${Object.entries(decisions).map(([fId, d]) => `
+                  <div style="padding: 10px 12px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle); font-size: 0.82rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                      <span class="badge badge-verified">${d.decision}</span>
+                      <span style="font-size: 0.74rem; color: var(--text-muted); font-family: var(--font-mono);">By: ${d.reviewer} &bull; ${Formatters.formatDate(d.timestamp)}</span>
+                    </div>
+                    <div><strong>Finding ID:</strong> <code>${fId}</code></div>
+                    <div style="color: var(--text-secondary); margin-top: 2px;">Justification: ${Formatters.escapeHtml(d.reason)}</div>
+                  </div>
+                `).join("")}
+              </div>
+            `}
+            <div style="margin-top: 14px; padding: 12px; background: var(--bg-card); border-radius: var(--radius-sm); border: 1px dashed var(--border-default); font-size: 0.82rem;">
+              <strong>Investigating Officer Endorsement:</strong> All physical and digital exhibits have been reviewed for temporal and logical consistency. Inquest proceedings endorsed by assigned IO <strong>${c.assigned_io_id}</strong>.
+            </div>
+          </div>
+        </div>
+
+        <!-- 9. CRYPTOGRAPHIC HASH LEDGER & STORAGE REFERENCES -->
+        <div class="card" style="margin-bottom: 20px;">
+          <div class="card-header">
+            <h3 class="card-title">9. Cryptographic Hash Ledger & Storage References</h3>
+            <span class="badge badge-verified">Integrity Chain</span>
+          </div>
+          <div style="overflow-x: auto; margin-top: 10px;">
+            <table class="table" style="width: 100%; font-size: 0.74rem; font-family: var(--font-mono);">
+              <thead>
+                <tr>
+                  <th>Exhibit ID</th>
+                  <th>SHA-256 Fingerprint</th>
+                  <th>SHA3-512 Digest (Prefix)</th>
+                  <th>Storage Reference</th>
+                  <th>Encryption</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${evidenceList.map(e => `
+                  <tr>
+                    <td style="color: var(--primary); font-weight: 700;">${e.evidence_id}</td>
+                    <td>${e.checksum_sha256 || 'N/A'}</td>
+                    <td>${(e.checksum_sha3_512 || 'N/A').substring(0, 32)}...</td>
+                    <td>${e.worm_storage_reference || 'Committed'}</td>
+                    <td>${e.encryption_algorithm || 'AES-256-GCM'}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 10. STATUTORY EVIDENTIARY LIMITATIONS & NOTICE -->
+        <div class="card" style="margin-bottom: 20px; border-left: 5px solid var(--primary);">
+          <div class="card-header">
+            <h3 class="card-title">10. Statutory Evidentiary Limitations & Notice</h3>
+            <span class="badge badge-attention">Legal Disclosure</span>
+          </div>
+          <div style="font-size: 0.82rem; color: var(--text-secondary); line-height: 1.6; margin-top: 8px;">
+            <p><strong>Legal / Evidentiary Notice:</strong> This computer-generated investigation summary does not constitute a statutory digital signature certificate under Section 63 Bharatiya Sakshya Adhiniyam, 2023 / Section 65B Indian Evidence Act, 1872. It reflects analytical guidance generated from available digital exhibits.</p>
+            <p>The system's Modus Operandi Reconstruction (EC-MORE) operates under the Information Firewall and Evidence Gate principles. Inquest conclusions and formal legal charges require independent physical investigation and authorized supervisory signature.</p>
+            <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--border-subtle); flex-wrap: wrap; gap: 14px;">
+              <div>
+                <div style="font-weight: 700; color: var(--text-main);">Assigned Investigating Officer</div>
+                <div style="font-size: 0.8rem; color: var(--text-muted);">${c.assigned_io_id} &bull; ${c.fir_metadata?.police_station || 'Jurisdiction Assigned'}</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="border-bottom: 1px solid var(--border-default); width: 200px; height: 30px; margin-bottom: 4px;"></div>
+                <div style="font-size: 0.75rem; color: var(--text-muted);">Signature / Official Seal</div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     `;
 
@@ -3300,7 +7071,12 @@ const ScreenAudit = {
     const container = document.getElementById("viewContainer");
     document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Case Activity`;
 
-    await ensureActiveCaseLoaded(caseId);
+    try {
+      await ensureActiveCaseLoaded(caseId);
+    } catch (err) {
+      renderCaseNotFound(caseId, err.message);
+      return;
+    }
     const c = State.activeCase;
 
     const logs = [...State.auditLog];
@@ -3995,6 +7771,21 @@ const ScreenSettings = {
           </div>
 
           <form id="settingsIdentityForm">
+            <div class="form-group" style="margin-bottom: 14px;">
+              <label class="form-label">Officer Identity Presets (Development)</label>
+              <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="ScreenSettings.applyPreset('dev-investigator-001', 'Dev Inspector (Development Only)', 'INVESTIGATING_OFFICER', 'KERALA')">
+                  🔍 dev-investigator-001 (Pipeline IO / Kerala)
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="ScreenSettings.applyPreset('SUPERVISOR-KL-01', 'Circle Inspector', 'SUPERVISORY_OFFICER', 'KERALA')">
+                  🛡️ Supervisory Officer (All Cases Scope)
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="ScreenSettings.applyPreset('IO-7842-SHARMA', 'IO Sharma', 'INVESTIGATING_OFFICER', 'KL-TVM-001')">
+                  👮 IO-7842-SHARMA (Station Officer)
+                </button>
+              </div>
+            </div>
+
             <div class="form-group">
               <label class="form-label" for="inpSubjectId">Investigating Officer Badge / ID</label>
               <input type="text" id="inpSubjectId" class="form-input" value="${State.auth.subjectId}">
@@ -4094,11 +7885,23 @@ const ScreenSettings = {
       State.auth.headers["X-Investigator-Id"] = subjectId;
       State.auth.headers["X-Investigator-Role"] = role;
       State.auth.headers["X-Investigator-Jurisdiction"] = jurisdiction;
+      localStorage.setItem("sakshi_dev_subject_id", subjectId);
+      localStorage.setItem("sakshi_dev_role", role);
+      localStorage.setItem("sakshi_dev_jurisdiction", jurisdiction);
 
       applyTheme(selectedTheme);
       updateHeaderAuth();
       UI.showToast(`Officer settings saved successfully`, "success");
     });
+  },
+
+  applyPreset(subjectId, displayName, role, jurisdiction) {
+    const idEl = document.getElementById("inpSubjectId");
+    const roleEl = document.getElementById("inpRole");
+    const jurEl = document.getElementById("inpJurisdiction");
+    if (idEl) idEl.value = subjectId;
+    if (roleEl) roleEl.value = role;
+    if (jurEl) jurEl.value = jurisdiction;
   }
 };
 

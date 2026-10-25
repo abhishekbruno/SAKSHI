@@ -5,17 +5,22 @@ Phase 2: Evidence Ingestion.
 """
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, File, Form, UploadFile, Query, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, Query, Response, status
+from sqlalchemy.orm import Session
 
 from app.api.deps import (
+    get_db,
     get_current_investigator,
     get_evidence_intake_service,
     get_mime_validation_service,
     get_antivirus_scan_service,
     get_worm_commit_service,
+    get_evidence_pipeline_orchestrator,
     get_integrity_service,
     get_object_lock_service,
     get_encryption_service,
+    get_rag_indexing_service,
+    get_evidence_extraction_service,
 )
 from app.core.security import AuthenticatedInvestigator
 from app.core.errors import InvalidEvidenceDataException
@@ -23,9 +28,14 @@ from app.services.evidence_intake_service import EvidenceIntakeService
 from app.services.mime_validation_service import MimeValidationService
 from app.services.antivirus_scan_service import AntivirusScanService
 from app.services.worm_commit_service import WORMCommitService
+from app.services.evidence_pipeline_orchestrator import EvidencePipelineOrchestrator
 from app.services.integrity_service import IntegrityService
 from app.services.object_lock_service import ObjectLockService
 from app.services.encryption_service import EncryptionService
+from app.services.rag_indexing_service import RAGIndexingService
+from app.services.evidence_extraction_service import EvidenceExtractionService
+from app.schemas.rag import RAGDocumentSummary
+from app.repositories.rag_repository import RAGRepository
 from app.schemas.evidence import (
     EvidenceCategory,
     EvidenceIntakeMetadata,
@@ -45,9 +55,32 @@ from app.schemas.evidence import (
     EncryptionResult,
     EncryptedEvidenceObject,
     EncryptionVerificationResult,
+    PipelineExecutionResult,
+    PipelineExecutionStatus,
+    EvidenceExtractedFactsResponse,
 )
 
 router = APIRouter(prefix="/cases/{case_id}/evidence", tags=["Evidence Ingestion (MOD-05)"])
+
+
+
+def _pipeline_response_status(
+    result: PipelineExecutionResult,
+    is_resume: bool,
+) -> int:
+    """Map a safe, structured workflow result to an HTTP response status."""
+    if result.overall_status == PipelineExecutionStatus.SUCCESS:
+        return status.HTTP_200_OK if is_resume else status.HTTP_201_CREATED
+    if result.overall_status in {
+        PipelineExecutionStatus.MIME_VALIDATION_FAILED,
+        PipelineExecutionStatus.ANTIVIRUS_QUARANTINED,
+        PipelineExecutionStatus.INTEGRITY_FAILED,
+    }:
+        return status.HTTP_422_UNPROCESSABLE_ENTITY
+    if result.overall_status == PipelineExecutionStatus.RETRYABLE_ERROR:
+        return status.HTTP_503_SERVICE_UNAVAILABLE
+    return status.HTTP_500_INTERNAL_SERVER_ERROR
+
 
 
 @router.post(
@@ -120,6 +153,104 @@ def list_evidence(
         skip=skip,
         limit=limit,
     )
+
+
+@router.post(
+    "/pipeline",
+    response_model=PipelineExecutionResult,
+    responses={
+        403: {"model": PipelineExecutionResult, "description": "Authorization denied"},
+        422: {"model": PipelineExecutionResult, "description": "MIME rejection or malware quarantine"},
+        503: {"model": PipelineExecutionResult, "description": "Retryable operational failure"},
+        500: {"model": PipelineExecutionResult, "description": "Permanent pipeline failure"},
+    },
+    summary="Run the MOD-05 through MOD-08 evidence-ingestion pipeline",
+)
+async def execute_evidence_pipeline(
+    case_id: str,
+    response: Response,
+    file: Optional[UploadFile] = File(
+        None,
+        description="Raw evidence payload for a new pipeline execution",
+    ),
+    evidence_id: Optional[str] = Form(
+        None,
+        description="Existing evidence ID to resume without repeating intake",
+    ),
+    evidence_category: Optional[EvidenceCategory] = Form(
+        None,
+        description="Forensic category, required for a new upload",
+    ),
+    declared_mime_type: Optional[str] = Form(
+        None,
+        description="Client-declared MIME type, required for a new upload",
+    ),
+    collection_datetime: Optional[str] = Form(None, description="Optional ISO-8601 collection timestamp"),
+    collection_location: Optional[str] = Form(None, description="Optional physical collection location"),
+    source_device_or_person: Optional[str] = Form(None, description="Optional source or custodial reference"),
+    description: Optional[str] = Form(None, description="Optional forensic description"),
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    orchestrator: EvidencePipelineOrchestrator = Depends(get_evidence_pipeline_orchestrator),
+) -> PipelineExecutionResult:
+    """Run a new upload once or safely resume an existing evidence record.
+
+    A resume request accepts only ``evidence_id``.  It never accepts a second
+    payload and therefore cannot silently repeat non-idempotent MOD-05 intake.
+    """
+    is_resume = evidence_id is not None
+    if is_resume:
+        if file is not None or any(
+            value is not None
+            for value in (
+                evidence_category,
+                declared_mime_type,
+                collection_datetime,
+                collection_location,
+                source_device_or_person,
+                description,
+            )
+        ):
+            raise InvalidEvidenceDataException(
+                "A pipeline resume accepts evidence_id only; do not include a file or intake metadata."
+            )
+        result = orchestrator.resume_existing_evidence(
+            case_id=case_id,
+            evidence_id=evidence_id,
+            investigator=investigator,
+        )
+    else:
+        if file is None or evidence_category is None or not declared_mime_type:
+            raise InvalidEvidenceDataException(
+                "A new pipeline execution requires file, evidence_category, and declared_mime_type."
+            )
+
+        parsed_datetime = None
+        if collection_datetime:
+            try:
+                parsed_datetime = datetime.fromisoformat(collection_datetime.replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise InvalidEvidenceDataException(
+                    f"Invalid ISO-8601 format for collection_datetime: {exc}"
+                )
+
+        metadata = EvidenceIntakeMetadata(
+            evidence_category=evidence_category,
+            declared_mime_type=declared_mime_type,
+            collection_datetime=parsed_datetime,
+            collection_location=collection_location,
+            source_device_or_person=source_device_or_person,
+            description=description,
+        )
+        result = orchestrator.execute_new_evidence(
+            case_id=case_id,
+            file_payload=await file.read(),
+            original_filename=file.filename or "evidence.bin",
+            metadata=metadata,
+            investigator=investigator,
+        )
+
+    response.status_code = _pipeline_response_status(result, is_resume=is_resume)
+    return result
 
 
 @router.get(
@@ -471,4 +602,128 @@ def verify_encryption_integrity(
         evidence_id=evidence_id,
         investigator=investigator,
     )
+
+
+@router.post(
+    "/{evidence_id}/index",
+    response_model=RAGDocumentSummary,
+    summary="Index or retry indexing for locked evidence exhibit (RAG Integration)"
+)
+def index_evidence(
+    case_id: str,
+    evidence_id: str,
+    force_reindex: bool = Query(False, description="Force re-indexing even if already indexed"),
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    service: RAGIndexingService = Depends(get_rag_indexing_service),
+    db: Session = Depends(get_db),
+) -> RAGDocumentSummary:
+    """
+    RAG Integration Endpoint:
+    Triggers or retries indexing for an evidence exhibit that has completed MOD-05 through MOD-10.
+    Retrying indexing does not repeat evidence intake, antivirus scanning, or WORM commitment.
+    Enforces that evidence is locked and verified prior to text extraction and embedding.
+    """
+    from app.repositories.case_repository import CaseRepository
+    from app.services.auth_service import authorization_service
+    from app.core.errors import CaseNotFoundException
+
+    case = CaseRepository(db).get_by_case_id(case_id)
+    if not case:
+        raise CaseNotFoundException(case_id)
+    authorization_service.check_can_modify_case(investigator, case)
+
+    doc = service.index_evidence(
+        case_id=case_id,
+        evidence_id=evidence_id,
+        investigator=investigator,
+        force_reindex=force_reindex,
+    )
+    return RAGDocumentSummary.model_validate(doc)
+
+
+@router.get(
+    "/{evidence_id}/index-status",
+    response_model=Optional[RAGDocumentSummary],
+    summary="Retrieve RAG indexing status for an evidence exhibit"
+)
+def get_evidence_index_status(
+    case_id: str,
+    evidence_id: str,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    db: Session = Depends(get_db),
+) -> Optional[RAGDocumentSummary]:
+    """
+    Returns the current indexing status and document metadata for an evidence exhibit.
+    """
+    from app.repositories.case_repository import CaseRepository
+    from app.repositories.evidence_repository import EvidenceRepository
+    from app.services.auth_service import authorization_service
+    from app.core.errors import CaseNotFoundException, EvidenceNotFoundException
+
+    case = CaseRepository(db).get_by_case_id(case_id)
+    if not case:
+        raise CaseNotFoundException(case_id)
+    authorization_service.check_can_read_case(investigator, case)
+
+    evidence = EvidenceRepository(db).get_by_evidence_id(evidence_id)
+    if not evidence or evidence.case_id != case_id:
+        raise EvidenceNotFoundException(evidence_id)
+
+    rag_repo = RAGRepository(db)
+    doc = rag_repo.get_document_by_evidence_and_version(evidence_id=evidence_id, processing_version="v1.0")
+    if not doc:
+        return None
+    return RAGDocumentSummary.model_validate(doc)
+
+
+@router.get(
+    "/{evidence_id}/extracted-facts",
+    response_model=EvidenceExtractedFactsResponse,
+    summary="Retrieve extracted facts, summary, dates, entities, and statements for evidence item"
+)
+def get_evidence_extracted_facts(
+    case_id: str,
+    evidence_id: str,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    extraction_service: EvidenceExtractionService = Depends(get_evidence_extraction_service),
+) -> EvidenceExtractedFactsResponse:
+    """
+    Returns authentic extracted facts with strict provenance and attribution:
+    - QUOTED_FROM_SOURCE
+    - EXTRACTED_BY_SOFTWARE
+    - AI_INTERPRETATION
+    - NEEDS_CONFIRMATION
+    Includes source text offsets, page numbers, and entity classifications.
+    Never invents facts or OCR results for unsupported media.
+    """
+    return extraction_service.extract_facts_from_evidence(
+        case_id=case_id,
+        evidence_id=evidence_id,
+        investigator=investigator,
+    )
+
+
+@router.post(
+    "/{evidence_id}/extract-facts",
+    response_model=EvidenceExtractedFactsResponse,
+    summary="Trigger extraction or re-extraction of facts for evidence item"
+)
+def trigger_evidence_extracted_facts(
+    case_id: str,
+    evidence_id: str,
+    force_reindex: bool = Query(False, description="Force re-indexing prior to extraction if document not yet indexed"),
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    extraction_service: EvidenceExtractionService = Depends(get_evidence_extraction_service),
+) -> EvidenceExtractedFactsResponse:
+    """
+    Explicitly runs extraction for evidence item.
+    Safe and idempotent; does not re-upload or modify raw evidence files.
+    """
+    return extraction_service.extract_facts_from_evidence(
+        case_id=case_id,
+        evidence_id=evidence_id,
+        investigator=investigator,
+        force_reindex=force_reindex,
+    )
+
 

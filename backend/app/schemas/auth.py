@@ -87,3 +87,15 @@ class AuthStatusResponse(BaseModel):
         ...,
         description="Whether the system is in development authentication mode"
     )
+    default_investigator_id: Optional[str] = Field(
+        default=None,
+        description="Default investigator ID when in development mode"
+    )
+    default_investigator_name: Optional[str] = Field(
+        default=None,
+        description="Default investigator display name when in development mode"
+    )
+    default_jurisdiction: Optional[str] = Field(
+        default=None,
+        description="Default jurisdiction code when in development mode"
+    )

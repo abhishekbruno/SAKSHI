@@ -1,0 +1,6 @@
+{
+  "Name": "SakshiEvidencePipeline",
+  "ProjectType": "Process",
+  "Description": "SAKSHI RPA Integration - Automated Forensic Evidence Ingestion Pipeline (MOD-05 through MOD-08)",
+  "MainFile": "Main.xaml"
+}

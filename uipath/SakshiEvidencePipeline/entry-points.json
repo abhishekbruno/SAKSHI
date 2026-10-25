@@ -1,0 +1,61 @@
+{
+  "$schema": "https://cloud.uipath.com/draft/2024-12/entry-point",
+  "entryPoints": [
+    {
+      "filePath": "Main.xaml",
+      "uniqueId": "b1c2d3e4-5678-90ab-cdef-1234567890ab",
+      "type": "process",
+      "input": {
+        "type": "object",
+        "properties": {
+          "in_CaseId": {
+            "type": "string",
+            "x-default-expression": "\"SAKSHI-TEST-2026-002\"",
+            "default": "SAKSHI-TEST-2026-002"
+          },
+          "in_EvidenceFilePath": {
+            "type": "string",
+            "x-default-expression": "\"C:\\main project\\test-data\\SAKSHI_Synthetic_Evidence_RAG_Test.pdf\"",
+            "default": "C:\\main project\\test-data\\SAKSHI_Synthetic_Evidence_RAG_Test.pdf"
+          },
+          "in_EvidenceCategory": {
+            "type": "string",
+            "x-default-expression": "\"DOCUMENT_PDF\"",
+            "default": "DOCUMENT_PDF"
+          },
+          "in_DeclaredMimeType": {
+            "type": "string",
+            "x-default-expression": "\"application/pdf\"",
+            "default": "application/pdf"
+          },
+          "in_ConfigPath": {
+            "type": "string",
+            "x-default-expression": "\"C:\\main project\\uipath\\SakshiEvidencePipeline\\Config.local.json\"",
+            "default": "C:\\main project\\uipath\\SakshiEvidencePipeline\\Config.local.json"
+          }
+        },
+        "required": []
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "out_OverallStatus": {
+            "type": "string"
+          },
+          "out_EvidenceId": {
+            "type": "string"
+          },
+          "out_WormStorageReference": {
+            "type": "string"
+          },
+          "out_Sha256Checksum": {
+            "type": "string"
+          },
+          "out_Message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,517 @@
+<Activity mc:Ignorable="sap sap2010" x:Class="ProcessPipelineResponse" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:njl="clr-namespace:Newtonsoft.Json.Linq;assembly=Newtonsoft.Json" xmlns:s="clr-namespace:System;assembly=System.Private.CoreLib" xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation" xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation" xmlns:scg="clr-namespace:System.Collections.Generic;assembly=System.Private.CoreLib" xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=System.Private.CoreLib" xmlns:ui="http://schemas.uipath.com/workflow/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="in_StatusCode" Type="InArgument(x:Int32)" />
+    <x:Property Name="in_ResponseBody" Type="InArgument(x:String)" />
+    <x:Property Name="in_EvidenceId" Type="InArgument(x:String)" />
+    <x:Property Name="out_OverallStatus" Type="OutArgument(x:String)" />
+    <x:Property Name="out_EvidenceId" Type="OutArgument(x:String)" />
+    <x:Property Name="out_WormStorageReference" Type="OutArgument(x:String)" />
+    <x:Property Name="out_Sha256Checksum" Type="OutArgument(x:String)" />
+    <x:Property Name="out_Message" Type="OutArgument(x:String)" />
+    <x:Property Name="out_IsRetryable" Type="OutArgument(x:Boolean)" />
+    <x:Property Name="out_IsComplete" Type="OutArgument(x:Boolean)" />
+  </x:Members>
+  <VisualBasic.Settings>
+    <x:Null />
+  </VisualBasic.Settings>
+  <sap:VirtualizedContainerService.HintSize>800,1600</sap:VirtualizedContainerService.HintSize>
+  <sap2010:WorkflowViewState.IdRef>ProcessPipelineResponse_1</sap2010:WorkflowViewState.IdRef>
+  <TextExpression.NamespacesForImplementation>
+    <sco:Collection x:TypeArguments="x:String">
+      <x:String>System</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Collections.ObjectModel</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>System</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Collections.ObjectModel</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>Newtonsoft.Json.Linq</x:String>
+      <x:String>System.Collections</x:String>
+      <x:String>System.Reflection</x:String>
+      <x:String>System.Activities</x:String>
+      <x:String>System.Activities.Statements</x:String>
+      <x:String>System.Runtime.Serialization</x:String>
+      <x:String>UiPath.Core.Activities</x:String>
+      <x:String>Newtonsoft.Json</x:String>
+      <x:String>System.Dynamic</x:String>
+      <x:String>System.ComponentModel</x:String>
+      <x:String>System.Collections.Specialized</x:String>
+      <x:String>System.Activities.Runtime.Collections</x:String>
+      <x:String>UiPath.Web.Activities</x:String>
+    </sco:Collection>
+  </TextExpression.NamespacesForImplementation>
+  <TextExpression.ReferencesForImplementation>
+    <sco:Collection x:TypeArguments="AssemblyReference">
+      <AssemblyReference>UiPath.System.Activities</AssemblyReference>
+      <AssemblyReference>System.Linq</AssemblyReference>
+      <AssemblyReference>System.ObjectModel</AssemblyReference>
+      <AssemblyReference>System.ComponentModel.TypeConverter</AssemblyReference>
+      <AssemblyReference>System.Console</AssemblyReference>
+      <AssemblyReference>System.Security.Permissions</AssemblyReference>
+      <AssemblyReference>System.Private.CoreLib</AssemblyReference>
+      <AssemblyReference>System.Configuration.ConfigurationManager</AssemblyReference>
+      <AssemblyReference>System.ComponentModel</AssemblyReference>
+      <AssemblyReference>System.Memory</AssemblyReference>
+      <AssemblyReference>System.Private.Uri</AssemblyReference>
+      <AssemblyReference>System.Private.ServiceModel</AssemblyReference>
+      <AssemblyReference>System.Collections</AssemblyReference>
+      <AssemblyReference>System.Linq.Expressions</AssemblyReference>
+      <AssemblyReference>System.Linq.AsyncEnumerable</AssemblyReference>
+      <AssemblyReference>System.Collections.Immutable</AssemblyReference>
+      <AssemblyReference>System.Linq.Parallel</AssemblyReference>
+      <AssemblyReference>System.Linq.Queryable</AssemblyReference>
+      <AssemblyReference>Newtonsoft.Json</AssemblyReference>
+      <AssemblyReference>UiPath.System.Activities.Design</AssemblyReference>
+      <AssemblyReference>UiPath.System.Activities.ViewModels</AssemblyReference>
+      <AssemblyReference>UiPath.Studio.Constants</AssemblyReference>
+      <AssemblyReference>System.Collections.NonGeneric</AssemblyReference>
+      <AssemblyReference>System.Reflection.DispatchProxy</AssemblyReference>
+      <AssemblyReference>System.Reflection.TypeExtensions</AssemblyReference>
+      <AssemblyReference>System.Reflection.Metadata</AssemblyReference>
+      <AssemblyReference>System.Activities</AssemblyReference>
+      <AssemblyReference>UiPath.Workflow</AssemblyReference>
+      <AssemblyReference>System.Runtime.Serialization.Formatters</AssemblyReference>
+      <AssemblyReference>System.Private.DataContractSerialization</AssemblyReference>
+      <AssemblyReference>System.Runtime.Serialization.Primitives</AssemblyReference>
+      <AssemblyReference>System.ComponentModel.EventBasedAsync</AssemblyReference>
+      <AssemblyReference>PresentationFramework</AssemblyReference>
+      <AssemblyReference>WindowsBase</AssemblyReference>
+      <AssemblyReference>System.ComponentModel.Primitives</AssemblyReference>
+      <AssemblyReference>System.Collections.Specialized</AssemblyReference>
+      <AssemblyReference>UiPath.Web.Activities</AssemblyReference>
+    </sco:Collection>
+  </TextExpression.ReferencesForImplementation>
+  <Sequence DisplayName="Process Pipeline Response JSON" sap:VirtualizedContainerService.HintSize="918,4261" sap2010:WorkflowViewState.IdRef="Sequence_1">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="njl:JObject" Name="parsedJson" />
+    </Sequence.Variables>
+    <sap:WorkflowViewStateService.ViewState>
+      <scg:Dictionary x:TypeArguments="x:String, x:Object">
+        <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+      </scg:Dictionary>
+    </sap:WorkflowViewStateService.ViewState>
+    <If Condition="[String.IsNullOrWhiteSpace(in_ResponseBody)]" DisplayName="Guard Missing HTTP Response Body" sap:VirtualizedContainerService.HintSize="650,4230" sap2010:WorkflowViewState.IdRef="If_MissingResponse">
+      <If.Then>
+        <Sequence DisplayName="Classify Missing Response" sap:VirtualizedContainerService.HintSize="648,1261" sap2010:WorkflowViewState.IdRef="Sequence_MissingResponse">
+          <sap:WorkflowViewStateService.ViewState>
+            <scg:Dictionary x:TypeArguments="x:String, x:Object">
+              <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+            </scg:Dictionary>
+          </sap:WorkflowViewStateService.ViewState>
+          <Assign DisplayName="Set Missing Response Status" sap:VirtualizedContainerService.HintSize="614,175" sap2010:WorkflowViewState.IdRef="Assign_MissingStatus">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[If(in_StatusCode = 503 AndAlso Not String.IsNullOrEmpty(in_EvidenceId), "RETRYABLE_ERROR", "INVALID_RESPONSE")]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Preserve Existing Evidence ID" sap:VirtualizedContainerService.HintSize="614,175" sap2010:WorkflowViewState.IdRef="Assign_MissingEvidenceId">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_EvidenceId]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[in_EvidenceId]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Missing Response Message" sap:VirtualizedContainerService.HintSize="614,175" sap2010:WorkflowViewState.IdRef="Assign_MissingMessage">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_Message]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[If(in_StatusCode = 503 AndAlso Not String.IsNullOrEmpty(in_EvidenceId), "HTTP 503 response body was empty; retrying the existing evidence record.", "HTTP response body was empty; JSON response processing was not possible. Status code: " + in_StatusCode.ToString())]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Missing Response Retry Flag" sap:VirtualizedContainerService.HintSize="614,175" sap2010:WorkflowViewState.IdRef="Assign_MissingRetry">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:Boolean">[in_StatusCode = 503 AndAlso Not String.IsNullOrEmpty(in_EvidenceId)]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Missing Response Completion" sap:VirtualizedContainerService.HintSize="614,175" sap2010:WorkflowViewState.IdRef="Assign_MissingComplete">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:Boolean">[Not (in_StatusCode = 503 AndAlso Not String.IsNullOrEmpty(in_EvidenceId))]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Clear Missing Response WORM Reference" sap:VirtualizedContainerService.HintSize="614,175" sap2010:WorkflowViewState.IdRef="Assign_MissingWorm">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_WormStorageReference]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[String.Empty]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Clear Missing Response Checksum" sap:VirtualizedContainerService.HintSize="614,60" sap2010:WorkflowViewState.IdRef="Assign_MissingChecksum">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_Sha256Checksum]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[String.Empty]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <ui:LogMessage DisplayName="Log Missing HTTP Response" sap:VirtualizedContainerService.HintSize="614,91" sap2010:WorkflowViewState.IdRef="LogMessage_8" Level="Warn" Message="[&quot;SAKSHI Pipeline: &quot; + out_Message]" />
+        </Sequence>
+      </If.Then>
+      <If.Else>
+        <TryCatch DisplayName="Deserialize and Process HTTP Response" sap:VirtualizedContainerService.HintSize="648,2785" sap2010:WorkflowViewState.IdRef="TryCatch_ResponseProcessing">
+          <TryCatch.Try>
+            <Sequence DisplayName="Deserialize and Evaluate Response" sap:VirtualizedContainerService.HintSize="606,1200" sap2010:WorkflowViewState.IdRef="Sequence_ResponseProcessing">
+              <sap:WorkflowViewStateService.ViewState>
+                <scg:Dictionary x:TypeArguments="x:String, x:Object">
+                  <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+                </scg:Dictionary>
+              </sap:WorkflowViewStateService.ViewState>
+              <ui:DeserializeJson x:TypeArguments="njl:JObject" DisplayName="Deserialize Response JSON" sap:VirtualizedContainerService.HintSize="572,60" sap2010:WorkflowViewState.IdRef="DeserializeJson`1_1" JsonObject="[parsedJson]" JsonString="[in_ResponseBody]" />
+              <Assign DisplayName="Extract Overall Status" sap:VirtualizedContainerService.HintSize="572,60" sap2010:WorkflowViewState.IdRef="Assign_13">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:String">[If(parsedJson("overall_status") IsNot Nothing, parsedJson("overall_status").ToString(), "UNKNOWN_ERROR")]</InArgument>
+                </Assign.Value>
+              </Assign>
+              <Assign DisplayName="Extract Evidence ID" sap:VirtualizedContainerService.HintSize="572,60" sap2010:WorkflowViewState.IdRef="Assign_14">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:String">[out_EvidenceId]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:String">[If(parsedJson("evidence_id") IsNot Nothing AndAlso parsedJson("evidence_id").Type.ToString() &lt;&gt; "Null", parsedJson("evidence_id").ToString(), String.Empty)]</InArgument>
+                </Assign.Value>
+              </Assign>
+              <Assign DisplayName="Extract Message" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_15">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:String">[out_Message]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:String">[If(parsedJson("message") IsNot Nothing, parsedJson("message").ToString(), String.Empty)]</InArgument>
+                </Assign.Value>
+              </Assign>
+              <Assign DisplayName="Extract WORM Reference" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_16">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:String">[out_WormStorageReference]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:String">[If(parsedJson("worm_storage_reference") IsNot Nothing AndAlso parsedJson("worm_storage_reference").Type.ToString() &lt;&gt; "Null", parsedJson("worm_storage_reference").ToString(), String.Empty)]</InArgument>
+                </Assign.Value>
+              </Assign>
+              <Assign DisplayName="Extract SHA256 Checksum" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_17">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:String">[out_Sha256Checksum]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:String">[If(parsedJson("checksum_sha256") IsNot Nothing AndAlso parsedJson("checksum_sha256").Type.ToString() &lt;&gt; "Null", parsedJson("checksum_sha256").ToString(), String.Empty)]</InArgument>
+                </Assign.Value>
+              </Assign>
+              <Assign DisplayName="Extract IsRetryable" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_18">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:Boolean">[parsedJson("is_retryable") IsNot Nothing AndAlso Convert.ToBoolean(parsedJson("is_retryable").ToString())]</InArgument>
+                </Assign.Value>
+              </Assign>
+              <If Condition="[in_StatusCode = 400]" DisplayName="Handle 400 Invalid Intake Request" sap:VirtualizedContainerService.HintSize="572,220">
+                <If.Then>
+                  <Sequence DisplayName="Invalid Evidence Intake Request" sap:VirtualizedContainerService.HintSize="530,175">
+                    <Assign DisplayName="Set 400 Intake Failure Status" sap:VirtualizedContainerService.HintSize="488,60">
+                      <Assign.To>
+                        <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+                      </Assign.To>
+                      <Assign.Value>
+                        <InArgument x:TypeArguments="x:String">INTAKE_FAILED</InArgument>
+                      </Assign.Value>
+                    </Assign>
+                    <Assign DisplayName="Mark 400 Complete" sap:VirtualizedContainerService.HintSize="488,60">
+                      <Assign.To>
+                        <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                      </Assign.To>
+                      <Assign.Value>
+                        <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                      </Assign.Value>
+                    </Assign>
+                    <Assign DisplayName="Mark 400 Not Retryable" sap:VirtualizedContainerService.HintSize="488,60">
+                      <Assign.To>
+                        <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                      </Assign.To>
+                      <Assign.Value>
+                        <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                      </Assign.Value>
+                    </Assign>
+                    <ui:LogMessage DisplayName="Log 400 Intake Failure" Level="Error" Message="[&quot;SAKSHI Pipeline: Evidence intake request was invalid (400). &quot; + out_Message]" />
+                  </Sequence>
+                </If.Then>
+                <If.Else>
+                  <If Condition="[in_StatusCode = 201]" DisplayName="Handle 201 Created" sap:VirtualizedContainerService.HintSize="572,220">
+                <If.Then>
+                  <Sequence DisplayName="Successful New Intake" sap:VirtualizedContainerService.HintSize="530,175">
+                    <Assign DisplayName="Mark 201 Complete" sap:VirtualizedContainerService.HintSize="488,60">
+                      <Assign.To>
+                        <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                      </Assign.To>
+                      <Assign.Value>
+                        <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                      </Assign.Value>
+                    </Assign>
+                    <Assign DisplayName="Mark 201 Not Retryable" sap:VirtualizedContainerService.HintSize="488,60">
+                      <Assign.To>
+                        <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                      </Assign.To>
+                      <Assign.Value>
+                        <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                      </Assign.Value>
+                    </Assign>
+                    <ui:LogMessage DisplayName="Log 201 Success" Level="Info" Message="[&quot;SAKSHI Pipeline: Evidence intake completed (201 Created). WORM reference and checksum were returned.&quot;]" />
+                  </Sequence>
+                </If.Then>
+                <If.Else>
+                  <If Condition="[in_StatusCode = 200]" DisplayName="Handle 200 OK" sap:VirtualizedContainerService.HintSize="530,220">
+                    <If.Then>
+                      <Sequence DisplayName="Successful Resume" sap:VirtualizedContainerService.HintSize="488,175">
+                        <Assign DisplayName="Mark 200 Complete" sap:VirtualizedContainerService.HintSize="446,60">
+                          <Assign.To>
+                            <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                          </Assign.To>
+                          <Assign.Value>
+                            <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                          </Assign.Value>
+                        </Assign>
+                        <Assign DisplayName="Mark 200 Not Retryable" sap:VirtualizedContainerService.HintSize="446,60">
+                          <Assign.To>
+                            <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                          </Assign.To>
+                          <Assign.Value>
+                            <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                          </Assign.Value>
+                        </Assign>
+                        <ui:LogMessage DisplayName="Log 200 Resume Success" Level="Info" Message="[&quot;SAKSHI Pipeline: Evidence resume completed (200 OK). Existing WORM record was confirmed.&quot;]" />
+                      </Sequence>
+                    </If.Then>
+                    <If.Else>
+                      <If Condition="[in_StatusCode = 422]" DisplayName="Handle 422 Unprocessable" sap:VirtualizedContainerService.HintSize="488,220">
+                        <If.Then>
+                          <Sequence DisplayName="Forensic Rejection or Quarantine" sap:VirtualizedContainerService.HintSize="446,175">
+                            <Assign DisplayName="Mark 422 Complete" sap:VirtualizedContainerService.HintSize="404,60">
+                              <Assign.To>
+                                <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                              </Assign.To>
+                              <Assign.Value>
+                                <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                              </Assign.Value>
+                            </Assign>
+                            <Assign DisplayName="Mark 422 Not Retryable" sap:VirtualizedContainerService.HintSize="404,60">
+                              <Assign.To>
+                                <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                              </Assign.To>
+                              <Assign.Value>
+                                <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                              </Assign.Value>
+                            </Assign>
+                            <ui:LogMessage DisplayName="Log 422 Forensic Outcome" Level="Warn" Message="[&quot;SAKSHI Pipeline: Evidence was rejected or quarantined (422 Unprocessable). Status: &quot; + out_OverallStatus]" />
+                          </Sequence>
+                        </If.Then>
+                        <If.Else>
+                          <If Condition="[in_StatusCode = 503]" DisplayName="Handle 503 Service Unavailable" sap:VirtualizedContainerService.HintSize="446,220">
+                            <If.Then>
+                              <Sequence DisplayName="Retryable Service Failure" sap:VirtualizedContainerService.HintSize="404,175">
+                                <Assign DisplayName="Set 503 Retryable Status" sap:VirtualizedContainerService.HintSize="362,60">
+                                  <Assign.To>
+                                    <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+                                  </Assign.To>
+                                  <Assign.Value>
+                                    <InArgument x:TypeArguments="x:String">RETRYABLE_ERROR</InArgument>
+                                  </Assign.Value>
+                                </Assign>
+                                <Assign DisplayName="Mark 503 Retryable" sap:VirtualizedContainerService.HintSize="362,60">
+                                  <Assign.To>
+                                    <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                                  </Assign.To>
+                                  <Assign.Value>
+                                    <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                                  </Assign.Value>
+                                </Assign>
+                                <Assign DisplayName="Mark 503 Incomplete" sap:VirtualizedContainerService.HintSize="362,60">
+                                  <Assign.To>
+                                    <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                                  </Assign.To>
+                                  <Assign.Value>
+                                    <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                                  </Assign.Value>
+                                </Assign>
+                                <ui:LogMessage DisplayName="Log 503 Retry" Level="Warn" Message="[&quot;SAKSHI Pipeline: Service unavailable or scanner timed out (503). The retry loop will resume the existing evidence record.&quot;]" />
+                              </Sequence>
+                            </If.Then>
+                            <If.Else>
+                              <If Condition="[in_StatusCode = 401]" DisplayName="Handle 401 Unauthorized" sap:VirtualizedContainerService.HintSize="404,220">
+                                <If.Then>
+                                  <Sequence DisplayName="Authentication Failure" sap:VirtualizedContainerService.HintSize="362,175">
+                                    <Assign DisplayName="Mark 401 Complete" sap:VirtualizedContainerService.HintSize="320,60">
+                                      <Assign.To>
+                                        <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                                      </Assign.To>
+                                      <Assign.Value>
+                                        <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                                      </Assign.Value>
+                                    </Assign>
+                                    <Assign DisplayName="Mark 401 Not Retryable" sap:VirtualizedContainerService.HintSize="320,60">
+                                      <Assign.To>
+                                        <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                                      </Assign.To>
+                                      <Assign.Value>
+                                        <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                                      </Assign.Value>
+                                    </Assign>
+                                    <ui:LogMessage DisplayName="Log 401 Authentication Failure" Level="Error" Message="[&quot;SAKSHI Pipeline: Authentication failed (401 Unauthorized). The pipeline is terminating without retry.&quot;]" />
+                                  </Sequence>
+                                </If.Then>
+                                <If.Else>
+                                  <If Condition="[in_StatusCode = 403]" DisplayName="Handle 403 Forbidden" sap:VirtualizedContainerService.HintSize="362,220">
+                                    <If.Then>
+                                      <Sequence DisplayName="Authorization Failure" sap:VirtualizedContainerService.HintSize="320,175">
+                                        <Assign DisplayName="Mark 403 Complete" sap:VirtualizedContainerService.HintSize="278,60">
+                                          <Assign.To>
+                                            <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                                          </Assign.To>
+                                          <Assign.Value>
+                                            <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                                          </Assign.Value>
+                                        </Assign>
+                                        <Assign DisplayName="Mark 403 Not Retryable" sap:VirtualizedContainerService.HintSize="278,60">
+                                          <Assign.To>
+                                            <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                                          </Assign.To>
+                                          <Assign.Value>
+                                            <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                                          </Assign.Value>
+                                        </Assign>
+                                        <ui:LogMessage DisplayName="Log 403 Authorization Failure" Level="Error" Message="[&quot;SAKSHI Pipeline: Authorization denied (403 Forbidden). The pipeline is terminating without retry.&quot;]" />
+                                      </Sequence>
+                                    </If.Then>
+                                    <If.Else>
+                                      <Sequence DisplayName="Handle Unmapped HTTP Status" sap:VirtualizedContainerService.HintSize="278,175">
+                                        <Assign DisplayName="Mark Unmapped Status Complete" sap:VirtualizedContainerService.HintSize="236,60">
+                                          <Assign.To>
+                                            <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                                          </Assign.To>
+                                          <Assign.Value>
+                                            <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                                          </Assign.Value>
+                                        </Assign>
+                                        <Assign DisplayName="Mark Unmapped Status Not Retryable" sap:VirtualizedContainerService.HintSize="236,60">
+                                          <Assign.To>
+                                            <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                                          </Assign.To>
+                                          <Assign.Value>
+                                            <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                                          </Assign.Value>
+                                        </Assign>
+                                        <ui:LogMessage DisplayName="Log Unmapped HTTP Status" Level="Error" Message="[&quot;SAKSHI Pipeline: Unmapped HTTP status &quot; + in_StatusCode.ToString() + &quot;. The response is treated as terminal.&quot;]" />
+                                      </Sequence>
+                                    </If.Else>
+                                  </If>
+                                </If.Else>
+                              </If>
+                            </If.Else>
+                          </If>
+                        </If.Else>
+                      </If>
+                    </If.Else>
+                  </If>
+                </If.Else>
+              </If>
+                </If.Else>
+              </If>
+            </Sequence>
+          </TryCatch.Try>
+          <TryCatch.Catches>
+            <Catch x:TypeArguments="s:Exception" sap:VirtualizedContainerService.HintSize="612,21" sap2010:WorkflowViewState.IdRef="Catch_InvalidResponse">
+              <ActivityAction x:TypeArguments="s:Exception">
+                <ActivityAction.Argument>
+                  <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />
+                </ActivityAction.Argument>
+                <Sequence DisplayName="Classify Invalid JSON Response" sap:VirtualizedContainerService.HintSize="606,1451" sap2010:WorkflowViewState.IdRef="Sequence_InvalidResponse">
+                  <sap:WorkflowViewStateService.ViewState>
+                    <scg:Dictionary x:TypeArguments="x:String, x:Object">
+                      <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+                    </scg:Dictionary>
+                  </sap:WorkflowViewStateService.ViewState>
+                  <Assign DisplayName="Set Invalid Response Status" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidStatus">
+                    <Assign.To>
+                      <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+                    </Assign.To>
+                    <Assign.Value>
+                      <InArgument x:TypeArguments="x:String">[If(in_StatusCode = 503 AndAlso Not String.IsNullOrEmpty(in_EvidenceId), "RETRYABLE_ERROR", "INVALID_RESPONSE")]</InArgument>
+                    </Assign.Value>
+                  </Assign>
+                  <Assign DisplayName="Preserve Invalid Response Evidence ID" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidEvidenceId">
+                    <Assign.To>
+                      <OutArgument x:TypeArguments="x:String">[out_EvidenceId]</OutArgument>
+                    </Assign.To>
+                    <Assign.Value>
+                      <InArgument x:TypeArguments="x:String">[in_EvidenceId]</InArgument>
+                    </Assign.Value>
+                  </Assign>
+                  <Assign DisplayName="Set Invalid Response Message" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidMessage">
+                    <Assign.To>
+                      <OutArgument x:TypeArguments="x:String">[out_Message]</OutArgument>
+                    </Assign.To>
+                    <Assign.Value>
+                      <InArgument x:TypeArguments="x:String">[If(in_StatusCode = 503 AndAlso Not String.IsNullOrEmpty(in_EvidenceId), "HTTP 503 response body was not valid JSON; retrying the existing evidence record.", "HTTP response body was not valid JSON. Status code: " + in_StatusCode.ToString())]</InArgument>
+                    </Assign.Value>
+                  </Assign>
+                  <Assign DisplayName="Set Invalid Response Retry Flag" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidRetry">
+                    <Assign.To>
+                      <OutArgument x:TypeArguments="x:Boolean">[out_IsRetryable]</OutArgument>
+                    </Assign.To>
+                    <Assign.Value>
+                      <InArgument x:TypeArguments="x:Boolean">[in_StatusCode = 503 AndAlso Not String.IsNullOrEmpty(in_EvidenceId)]</InArgument>
+                    </Assign.Value>
+                  </Assign>
+                  <Assign DisplayName="Set Invalid Response Completion" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidComplete">
+                    <Assign.To>
+                      <OutArgument x:TypeArguments="x:Boolean">[out_IsComplete]</OutArgument>
+                    </Assign.To>
+                    <Assign.Value>
+                      <InArgument x:TypeArguments="x:Boolean">[Not (in_StatusCode = 503 AndAlso Not String.IsNullOrEmpty(in_EvidenceId))]</InArgument>
+                    </Assign.Value>
+                  </Assign>
+                  <Assign DisplayName="Clear Invalid Response WORM Reference" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidWorm">
+                    <Assign.To>
+                      <OutArgument x:TypeArguments="x:String">[out_WormStorageReference]</OutArgument>
+                    </Assign.To>
+                    <Assign.Value>
+                      <InArgument x:TypeArguments="x:String">[String.Empty]</InArgument>
+                    </Assign.Value>
+                  </Assign>
+                  <Assign DisplayName="Clear Invalid Response Checksum" sap:VirtualizedContainerService.HintSize="572,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidChecksum">
+                    <Assign.To>
+                      <OutArgument x:TypeArguments="x:String">[out_Sha256Checksum]</OutArgument>
+                    </Assign.To>
+                    <Assign.Value>
+                      <InArgument x:TypeArguments="x:String">[String.Empty]</InArgument>
+                    </Assign.Value>
+                  </Assign>
+                  <ui:LogMessage DisplayName="Log Invalid HTTP JSON" sap:VirtualizedContainerService.HintSize="572,166" sap2010:WorkflowViewState.IdRef="LogMessage_7" Level="Error" Message="[&quot;SAKSHI Pipeline: &quot; + out_Message + &quot; Error: &quot; + exception.Message]" />
+                </Sequence>
+              </ActivityAction>
+            </Catch>
+          </TryCatch.Catches>
+          <TryCatch.Finally>
+            <Sequence DisplayName="Finally" sap:VirtualizedContainerService.HintSize="606,25" sap2010:WorkflowViewState.IdRef="Sequence_9">
+              <sap:WorkflowViewStateService.ViewState>
+                <scg:Dictionary x:TypeArguments="x:String, x:Object">
+                  <x:Boolean x:Key="IsExpanded">False</x:Boolean>
+                </scg:Dictionary>
+              </sap:WorkflowViewStateService.ViewState>
+            </Sequence>
+          </TryCatch.Finally>
+        </TryCatch>
+      </If.Else>
+    </If>
+  </Sequence>
+</Activity>

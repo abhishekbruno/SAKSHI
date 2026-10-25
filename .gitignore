@@ -25,6 +25,7 @@ sakshi_cases.db
 # Environment & credentials
 .env
 .env.local
+**/Config.local.json
 *.pem
 *.key
 
@@ -43,3 +44,9 @@ node_modules/
 # Test temporary artifacts
 .test-tmp/
 */.test-tmp/
+
+# UiPath Studio build caches & temporary files
+**/.local/
+**/.settings/
+**/.tmh/
+*.dll

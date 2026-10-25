@@ -382,6 +382,12 @@ class DevAuthenticationService(IAuthenticationService):
 
     DEV_ISSUER = "sakshi-development-idp"
 
+    DEV_ROLE_MAPPING = {
+        "INVESTIGATOR": "INVESTIGATING_OFFICER",
+        "IO": "INVESTIGATING_OFFICER",
+        "SUPERVISOR": "SUPERVISORY_OFFICER",
+    }
+
     def authenticate_request(
         self,
         auth_header: Optional[str] = None,
@@ -403,7 +409,8 @@ class DevAuthenticationService(IAuthenticationService):
         subject_id = settings.DEV_INVESTIGATOR_SUBJECT_ID
         display_name = settings.DEV_INVESTIGATOR_NAME
         email = settings.DEV_INVESTIGATOR_EMAIL
-        role = dev_role or "INVESTIGATING_OFFICER"
+        raw_role = (dev_role.strip() if dev_role else "") or "INVESTIGATING_OFFICER"
+        role = self.DEV_ROLE_MAPPING.get(raw_role.upper(), raw_role)
         jurisdiction = dev_jurisdiction
 
         # If Bearer token is provided, use it as the subject_id
@@ -464,7 +471,12 @@ class IAuthorizationService(ABC):
     Full implementation belongs to MOD-03.
     """
     @abstractmethod
-    def check_can_create_case(self, investigator: AuthenticatedInvestigator, target_station: Optional[str] = None) -> None:
+    def check_can_create_case(
+        self,
+        investigator: AuthenticatedInvestigator,
+        target_station: Optional[str] = None,
+        target_jurisdiction: Optional[str] = None,
+    ) -> None:
         pass
 
     @abstractmethod
@@ -541,9 +553,16 @@ class PolicyEngineAuthorizationService(IAuthorizationService):
         self._engine = policy_engine
         self._AuthorizationContext = AuthorizationContext
 
-    def check_can_create_case(self, investigator: AuthenticatedInvestigator, target_station: Optional[str] = None) -> None:
+    def check_can_create_case(
+        self,
+        investigator: AuthenticatedInvestigator,
+        target_station: Optional[str] = None,
+        target_jurisdiction: Optional[str] = None,
+    ) -> None:
         ctx = self._AuthorizationContext.from_investigator(
-            investigator, action="create"
+            investigator,
+            action="create",
+            resource_jurisdiction=target_jurisdiction,
         )
         decision = self._engine.evaluate(ctx)
         self._audit_and_enforce(decision, investigator)

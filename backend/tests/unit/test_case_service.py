@@ -152,3 +152,31 @@ def test_phase2_integration_contract(db_session, mock_io1):
     assert contract.authorized_io_id == mock_io1.investigator_id
     assert contract.lifecycle_stage == "INITIALIZED"
     assert contract.case_workspace_boundary["ingestion_gate_open"] is True
+
+
+def test_create_case_cross_jurisdiction_rejected(db_session, mock_io1):
+    service = CaseService(db_session)
+    payload = CaseCreateRequest(
+        title="Unauthorized Cross-Jurisdiction Case",
+        fir_metadata=FIRMetadata(
+            fir_number="FIR-JUR-FAIL-01",
+            police_station="Remote Station",
+            jurisdiction_code="JUR-DEL-05"  # mock_io1 is JUR-DEL-04
+        )
+    )
+    with pytest.raises(ForbiddenException):
+        service.create_case(payload, mock_io1)
+
+
+def test_create_case_matching_jurisdiction_allowed(db_session, mock_io1):
+    service = CaseService(db_session)
+    payload = CaseCreateRequest(
+        title="Authorized Matching Jurisdiction Case",
+        fir_metadata=FIRMetadata(
+            fir_number="FIR-JUR-OK-01",
+            police_station="South Station",
+            jurisdiction_code="JUR-DEL-04"
+        )
+    )
+    case = service.create_case(payload, mock_io1)
+    assert case.case_id.startswith("SAKSHI-CASE-")

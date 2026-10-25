@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.core.errors import SakshiException
 from app.core.logging import logger
 from app.db.base import Base
-from app.db.session import engine
+from app.db.session import engine, SessionLocal
 from app.models.case import Case
 from app.models.evidence import Evidence
 from app.models.organization import Organization, Jurisdiction, PoliceStation
@@ -34,6 +34,51 @@ async def lifespan(app: FastAPI):
         logger.info("Initializing SAKSHI Investigation Platform development SQLite tables...")
         Base.metadata.create_all(bind=engine)
         logger.info("Development database tables verified.")
+        try:
+            with SessionLocal() as db:
+                existing_case = db.query(Case).filter(Case.case_id == "SAKSHI-TEST-2026-002").first()
+                if not existing_case:
+                    test_case = Case(
+                        case_id="SAKSHI-TEST-2026-002",
+                        title="Unnatural Death Investigation - Case 002",
+                        fir_metadata={
+                            "fir_number": "FIR-TEST-2026-002",
+                            "police_station": "Fort Police Station",
+                            "incident_date": "2026-10-01T10:00:00Z",
+                            "report_date": "2026-10-01T11:30:00Z",
+                            "jurisdiction_code": "KERALA",
+                        },
+                        assigned_io_id="dev-investigator-001",
+                        lifecycle_stage="EVIDENCE_INGESTION",
+                        status="ACTIVE",
+                        case_workspace_path="/cases/SAKSHI-TEST-2026-002",
+                        created_by="dev-investigator-001",
+                    )
+                    db.add(test_case)
+                    db.commit()
+
+                existing_ev = db.query(Evidence).filter(Evidence.evidence_id == "SAKSHI-EVID-2026-E51D496A").first()
+                if not existing_ev:
+                    test_ev = Evidence(
+                        evidence_id="SAKSHI-EVID-2026-E51D496A",
+                        case_id="SAKSHI-TEST-2026-002",
+                        original_file_name="SAKSHI_Synthetic_Evidence_RAG_Test.pdf",
+                        stored_file_name="SAKSHI-EVID-2026-E51D496A.pdf",
+                        evidence_category="DOCUMENT_PDF",
+                        declared_mime_type="application/pdf",
+                        detected_mime_type="application/pdf",
+                        file_size_bytes=42000,
+                        submitting_investigator_id="dev-investigator-001",
+                        status="COMMITTED",
+                        worm_status="COMMITTED",
+                        integrity_status="VERIFIED",
+                        raw_storage_path="/storage/SAKSHI-EVID-2026-E51D496A.pdf",
+                    )
+                    db.add(test_ev)
+                    db.commit()
+                logger.info("Development synthetic test fixtures verified.")
+        except Exception as e:
+            logger.warning("Could not auto-seed development fixtures: %s", e)
     else:
         logger.info(
             "Production/PostgreSQL environment detected (%s). "

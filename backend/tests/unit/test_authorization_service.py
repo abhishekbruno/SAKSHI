@@ -139,6 +139,18 @@ class TestRBACEvaluation:
         assert decision.allowed is True
         assert "RBAC" in decision.policy_id or "ABAC" in decision.policy_id
 
+    def test_rbac_investigator_alias_grants_case_create(self, engine):
+        """1b. INVESTIGATOR alias grants CASE_CREATE."""
+        ctx = AuthorizationContext(
+            subject_id="dev-investigator-001",
+            subject_role="INVESTIGATOR",
+            subject_roles=["INVESTIGATOR"],
+            action="create",
+        )
+        decision = engine.evaluate(ctx)
+        assert decision.allowed is True
+        assert decision.policy_id == "ABAC_CREATE_AUTHORIZED"
+
     def test_rbac_valid_role_forbidden_action_deny(self, engine):
         """2. Valid role + forbidden action -> DENY."""
         # CASE_ADMIN does not have permission to update case or create case
@@ -264,6 +276,57 @@ class TestABACEvaluation:
         assert decision.allowed is False
         assert decision.policy_id == "CASE_ASSIGN_DENIED"
 
+    def test_abac_case_creation_jurisdiction_matching_allow(self, engine):
+        """Case creation within investigator's authorized jurisdiction -> ALLOW."""
+        officer = AuthenticatedInvestigator(
+            subject_id="IO-TVM",
+            role="INVESTIGATING_OFFICER",
+            station_jurisdiction="KERALA",
+            is_authenticated=True,
+        )
+        ctx = AuthorizationContext.from_investigator(
+            officer,
+            action="create",
+            resource_jurisdiction="KERALA",
+        )
+        decision = engine.evaluate(ctx)
+        assert decision.allowed is True
+        assert decision.policy_id == "ABAC_CREATE_AUTHORIZED"
+
+    def test_abac_case_creation_jurisdiction_mismatch_deny(self, engine):
+        """Case creation outside investigator's authorized jurisdiction -> DENY."""
+        officer = AuthenticatedInvestigator(
+            subject_id="IO-TVM",
+            role="INVESTIGATING_OFFICER",
+            station_jurisdiction="KERALA",
+            is_authenticated=True,
+        )
+        ctx = AuthorizationContext.from_investigator(
+            officer,
+            action="create",
+            resource_jurisdiction="DELHI",
+        )
+        decision = engine.evaluate(ctx)
+        assert decision.allowed is False
+        assert decision.policy_id == "CASE_CREATE_JURISDICTION_DENIED"
+
+    def test_abac_case_creation_supervisor_all_jurisdictions_allow(self, engine):
+        """Supervisory officer with ALL jurisdiction creating in any jurisdiction -> ALLOW."""
+        supervisor = AuthenticatedInvestigator(
+            subject_id="IO-SUP",
+            role="SUPERVISORY_OFFICER",
+            station_jurisdiction="ALL",
+            is_authenticated=True,
+        )
+        ctx = AuthorizationContext.from_investigator(
+            supervisor,
+            action="create",
+            resource_jurisdiction="DELHI",
+        )
+        decision = engine.evaluate(ctx)
+        assert decision.allowed is True
+        assert decision.policy_id == "ABAC_CREATE_AUTHORIZED"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 3. SECURITY TESTS
@@ -352,7 +415,7 @@ class TestSecurityControls:
                 fir_metadata=FIRMetadata(
                     fir_number="FIR-CROSS-01",
                     police_station="South Station",
-                    jurisdiction_code="JUR-SOUTH",
+                    jurisdiction_code="JUR-DEL-04",
                 )
             ),
             investigator=mock_io1
@@ -447,7 +510,7 @@ class TestAuthorizationAPI:
                 "fir_metadata": {
                     "fir_number": "FIR-403-01",
                     "police_station": "Station A",
-                    "jurisdiction_code": "JUR-A"
+                    "jurisdiction_code": "JUR-DEL-04"
                 }
             },
             headers=auth_headers_io1

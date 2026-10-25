@@ -1,0 +1,132 @@
+<Activity mc:Ignorable="sap sap2010" x:Class="SubmitEvidencePipeline" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation" xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation" xmlns:scg="clr-namespace:System.Collections.Generic;assembly=System.Private.CoreLib" xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=System.Private.CoreLib" xmlns:ui="http://schemas.uipath.com/workflow/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="in_EndpointUrl" Type="InArgument(x:String)" />
+    <x:Property Name="in_EvidenceFilePath" Type="InArgument(x:String)" />
+    <x:Property Name="in_EvidenceId" Type="InArgument(x:String)" />
+    <x:Property Name="in_EvidenceCategory" Type="InArgument(x:String)" />
+    <x:Property Name="in_DeclaredMimeType" Type="InArgument(x:String)" />
+    <x:Property Name="in_InvestigatorId" Type="InArgument(x:String)" />
+    <x:Property Name="in_InvestigatorRole" Type="InArgument(x:String)" />
+    <x:Property Name="in_InvestigatorJurisdiction" Type="InArgument(x:String)" />
+    <x:Property Name="out_StatusCode" Type="OutArgument(x:Int32)" />
+    <x:Property Name="out_ResponseBody" Type="OutArgument(x:String)" />
+  </x:Members>
+  <VisualBasic.Settings>
+    <x:Null />
+  </VisualBasic.Settings>
+  <sap:VirtualizedContainerService.HintSize>800,1200</sap:VirtualizedContainerService.HintSize>
+  <sap2010:WorkflowViewState.IdRef>SubmitEvidencePipeline_1</sap2010:WorkflowViewState.IdRef>
+  <TextExpression.NamespacesForImplementation>
+    <sco:Collection x:TypeArguments="x:String">
+      <x:String>GlobalConstantsNamespace</x:String>
+      <x:String>GlobalVariablesNamespace</x:String>
+      <x:String>System</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Collections.ObjectModel</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>UiPath.Core</x:String>
+      <x:String>UiPath.Core.Activities</x:String>
+    </sco:Collection>
+  </TextExpression.NamespacesForImplementation>
+  <TextExpression.ReferencesForImplementation>
+    <sco:Collection x:TypeArguments="AssemblyReference">
+      <AssemblyReference>UiPath.System.Activities</AssemblyReference>
+      <AssemblyReference>System.Linq</AssemblyReference>
+      <AssemblyReference>System.ObjectModel</AssemblyReference>
+      <AssemblyReference>System.ComponentModel.TypeConverter</AssemblyReference>
+    </sco:Collection>
+  </TextExpression.ReferencesForImplementation>
+  <Sequence DisplayName="Submit Evidence Pipeline HTTP Request" sap:VirtualizedContainerService.HintSize="760,1400" sap2010:WorkflowViewState.IdRef="Sequence_1">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Name="validatedEvidenceFilePath" />
+    </Sequence.Variables>
+    <sap:WorkflowViewStateService.ViewState>
+      <scg:Dictionary x:TypeArguments="x:String, x:Object">
+        <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+      </scg:Dictionary>
+    </sap:WorkflowViewStateService.ViewState>
+    <If Condition="[String.IsNullOrEmpty(in_EvidenceId)]" DisplayName="Initial Upload or Safe Resume" sap:VirtualizedContainerService.HintSize="698,760" sap2010:WorkflowViewState.IdRef="If_1">
+      <If.Then>
+        <If Condition="[String.IsNullOrWhiteSpace(in_EvidenceFilePath) OrElse Not System.IO.File.Exists(in_EvidenceFilePath)]" DisplayName="Validate Initial Evidence File Path" sap:VirtualizedContainerService.HintSize="656,620" sap2010:WorkflowViewState.IdRef="If_ValidateEvidenceFilePath">
+          <If.Then>
+            <Sequence DisplayName="Reject Missing or Invalid Evidence File" sap:VirtualizedContainerService.HintSize="614,360" sap2010:WorkflowViewState.IdRef="Sequence_InvalidEvidenceFilePath">
+              <Assign DisplayName="Set Invalid File Path Status" sap:VirtualizedContainerService.HintSize="572,60" sap2010:WorkflowViewState.IdRef="Assign_InvalidFilePathStatus">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:Int32">[out_StatusCode]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:Int32">400</InArgument>
+                </Assign.Value>
+              </Assign>
+              <Assign DisplayName="Set Invalid File Path Response" sap:VirtualizedContainerService.HintSize="572,91" sap2010:WorkflowViewState.IdRef="Assign_InvalidFilePathResponse">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:String">[out_ResponseBody]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:String">[If(String.IsNullOrWhiteSpace(in_EvidenceFilePath), "{""overall_status"":""INTAKE_FAILED"",""message"":""Evidence file path is required for initial upload."",""is_retryable"":false}", "{""overall_status"":""INTAKE_FAILED"",""message"":""Evidence file path does not identify an existing file accessible to the robot."",""is_retryable"":false}")]</InArgument>
+                </Assign.Value>
+              </Assign>
+              <ui:LogMessage DisplayName="Log Invalid Evidence File Path" sap:VirtualizedContainerService.HintSize="572,91" Level="Error" Message="[If(String.IsNullOrWhiteSpace(in_EvidenceFilePath), &quot;SAKSHI Pipeline: Initial upload requires a non-empty evidence file path. No HTTP request was sent.&quot;, &quot;SAKSHI Pipeline: Initial upload file path is invalid or inaccessible. No HTTP request was sent.&quot;)]" />
+            </Sequence>
+          </If.Then>
+          <If.Else>
+            <Sequence DisplayName="Initial Multipart Evidence Upload" sap:VirtualizedContainerService.HintSize="614,620" sap2010:WorkflowViewState.IdRef="Sequence_2">
+              <Assign DisplayName="Normalize Evidence File Path" sap:VirtualizedContainerService.HintSize="572,60" sap2010:WorkflowViewState.IdRef="Assign_ValidatedEvidenceFilePath">
+                <Assign.To>
+                  <OutArgument x:TypeArguments="x:String">[validatedEvidenceFilePath]</OutArgument>
+                </Assign.To>
+                <Assign.Value>
+                  <InArgument x:TypeArguments="x:String">[System.IO.Path.GetFullPath(in_EvidenceFilePath)]</InArgument>
+                </Assign.Value>
+              </Assign>
+              <ui:HttpClient Body="{x:Null}" ClientCertificate="{x:Null}" ClientCertificatePassword="{x:Null}" ConsumerKey="{x:Null}" ConsumerSecret="{x:Null}" ContinueOnError="{x:Null}" FileAttachments="{x:Null}" OAuth1Token="{x:Null}" OAuth1TokenSecret="{x:Null}" OAuth2Token="{x:Null}" Password="{x:Null}" ResourcePath="{x:Null}" ResponseAttachment="{x:Null}" ResponseHeaders="{x:Null}" SecureClientCertificatePassword="{x:Null}" SecurePassword="{x:Null}" Username="{x:Null}" AcceptFormat="ANY" AuthenticationType="None" BodyFormat="application/xml" DisplayName="HTTP Pipeline Upload Request" EnableSSLVerification="True" EndPoint="[in_EndpointUrl]" sap:VirtualizedContainerService.HintSize="572,69" sap2010:WorkflowViewState.IdRef="HttpClient_Upload" Method="POST" Result="[out_ResponseBody]" StatusCode="[out_StatusCode]" TimeoutMS="30000">
+                <ui:HttpClient.Attachments>
+                  <InArgument x:TypeArguments="x:String" x:Key="file">[validatedEvidenceFilePath]</InArgument>
+                </ui:HttpClient.Attachments>
+                <ui:HttpClient.Cookies>
+                  <scg:Dictionary x:TypeArguments="x:String, InArgument(x:String)" />
+                </ui:HttpClient.Cookies>
+                <ui:HttpClient.Headers>
+                  <InArgument x:TypeArguments="x:String" x:Key="X-Investigator-Id">[in_InvestigatorId]</InArgument>
+                  <InArgument x:TypeArguments="x:String" x:Key="X-Investigator-Role">[in_InvestigatorRole]</InArgument>
+                  <InArgument x:TypeArguments="x:String" x:Key="X-Investigator-Jurisdiction">[in_InvestigatorJurisdiction]</InArgument>
+                </ui:HttpClient.Headers>
+                <ui:HttpClient.Parameters>
+                  <InArgument x:TypeArguments="x:String" x:Key="evidence_category">[in_EvidenceCategory]</InArgument>
+                  <InArgument x:TypeArguments="x:String" x:Key="declared_mime_type">[in_DeclaredMimeType]</InArgument>
+                </ui:HttpClient.Parameters>
+                <ui:HttpClient.UrlSegments>
+                  <scg:Dictionary x:TypeArguments="x:String, InArgument(x:String)" />
+                </ui:HttpClient.UrlSegments>
+              </ui:HttpClient>
+            </Sequence>
+          </If.Else>
+        </If>
+      </If.Then>
+      <If.Else>
+        <Sequence DisplayName="Safe Resume Existing Evidence" sap:VirtualizedContainerService.HintSize="656,620" sap2010:WorkflowViewState.IdRef="Sequence_3">
+          <ui:HttpClient Body="{x:Null}" ClientCertificate="{x:Null}" ClientCertificatePassword="{x:Null}" ConsumerKey="{x:Null}" ConsumerSecret="{x:Null}" ContinueOnError="{x:Null}" FileAttachments="{x:Null}" OAuth1Token="{x:Null}" OAuth1TokenSecret="{x:Null}" OAuth2Token="{x:Null}" Password="{x:Null}" ResourcePath="{x:Null}" ResponseAttachment="{x:Null}" ResponseHeaders="{x:Null}" SecureClientCertificatePassword="{x:Null}" SecurePassword="{x:Null}" Username="{x:Null}" AcceptFormat="ANY" AuthenticationType="None" BodyFormat="application/xml" DisplayName="HTTP Pipeline Resume Request" EnableSSLVerification="True" EndPoint="[in_EndpointUrl]" sap:VirtualizedContainerService.HintSize="614,69" sap2010:WorkflowViewState.IdRef="HttpClient_Resume" Method="POST" Result="[out_ResponseBody]" StatusCode="[out_StatusCode]" TimeoutMS="30000">
+            <ui:HttpClient.Attachments>
+              <scg:Dictionary x:TypeArguments="x:String, InArgument(x:String)" />
+            </ui:HttpClient.Attachments>
+            <ui:HttpClient.Cookies>
+              <scg:Dictionary x:TypeArguments="x:String, InArgument(x:String)" />
+            </ui:HttpClient.Cookies>
+            <ui:HttpClient.Headers>
+              <InArgument x:TypeArguments="x:String" x:Key="X-Investigator-Id">[in_InvestigatorId]</InArgument>
+              <InArgument x:TypeArguments="x:String" x:Key="X-Investigator-Role">[in_InvestigatorRole]</InArgument>
+              <InArgument x:TypeArguments="x:String" x:Key="X-Investigator-Jurisdiction">[in_InvestigatorJurisdiction]</InArgument>
+            </ui:HttpClient.Headers>
+            <ui:HttpClient.Parameters>
+              <InArgument x:TypeArguments="x:String" x:Key="evidence_id">[in_EvidenceId]</InArgument>
+            </ui:HttpClient.Parameters>
+            <ui:HttpClient.UrlSegments>
+              <scg:Dictionary x:TypeArguments="x:String, InArgument(x:String)" />
+            </ui:HttpClient.UrlSegments>
+          </ui:HttpClient>
+        </Sequence>
+      </If.Else>
+    </If>
+    <ui:LogMessage DisplayName="Log HTTP Outcome" sap:VirtualizedContainerService.HintSize="698,91" sap2010:WorkflowViewState.IdRef="LogMessage_1" Level="Info" Message="[&quot;HTTP POST &quot; + in_EndpointUrl + &quot; completed with StatusCode: &quot; + out_StatusCode.ToString]" />
+  </Sequence>
+</Activity>

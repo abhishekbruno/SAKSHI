@@ -81,6 +81,9 @@ def get_auth_status() -> AuthStatusResponse:
         issuer_url=settings.OIDC_ISSUER_URL if settings.is_oidc_auth else None,
         client_id=settings.OIDC_CLIENT_ID if settings.is_oidc_auth else None,
         development_mode=settings.is_development_auth,
+        default_investigator_id=settings.DEV_INVESTIGATOR_SUBJECT_ID if settings.is_development_auth else None,
+        default_investigator_name=settings.DEV_INVESTIGATOR_NAME if settings.is_development_auth else None,
+        default_jurisdiction="KERALA" if settings.is_development_auth else None,
     )
 
 

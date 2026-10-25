@@ -1,0 +1,20 @@
+{
+  "Settings": {
+    "ApiBaseUrl": "http://localhost:8000/api/v1",
+    "EvidencePipelineEndpoint": "/cases/{case_id}/evidence/pipeline",
+    "AuthenticationMode": "not-configured",
+    "DevelopmentInvestigatorId": "",
+    "DevelopmentInvestigatorRole": "",
+    "DevelopmentInvestigatorJurisdiction": "",
+    "RequestTimeoutMilliseconds": 30000,
+    "MaxRetryAttempts": 3,
+    "RetryDelaySeconds": 5,
+    "DefaultEvidenceCategory": "DOCUMENT_PDF",
+    "DefaultDeclaredMimeType": "application/pdf"
+  },
+  "Audit": {
+    "LogSensitivePayloads": false,
+    "LogRedactedTokenPrefix": "SEC***",
+    "RobotIdentifier": "SAKSHI-UIPATH-ROBOT-01"
+  }
+}

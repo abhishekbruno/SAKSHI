@@ -89,7 +89,11 @@ class CaseService:
         )
 
         # 1. Authorization check
-        self.authz.check_can_create_case(investigator, payload.fir_metadata.police_station)
+        self.authz.check_can_create_case(
+            investigator=investigator,
+            target_station=payload.fir_metadata.police_station,
+            target_jurisdiction=payload.fir_metadata.jurisdiction_code,
+        )
 
         # 2. Duplicate detection
         existing = self.repo.find_existing_by_fir(
@@ -107,7 +111,11 @@ class CaseService:
         self.authz.check_can_assign_io(investigator, target_io)
 
         # 4. Generate unique Case ID and Workspace locator
-        case_id, workspace_id = self.generate_case_id()
+        if getattr(payload, "case_id", None):
+            case_id = payload.case_id
+            workspace_id = f"WS-{case_id.split('-')[-1]}" if "-" in case_id else f"WS-{case_id[:8]}"
+        else:
+            case_id, workspace_id = self.generate_case_id()
         workspace_path = f"/sakshi/workspaces/{case_id}"
 
         # 5. Build Case entity
@@ -301,4 +309,30 @@ class CaseService:
                 "police_station": case.fir_metadata.get("police_station"),
                 "created_at": case.created_at.isoformat()
             }
+        )
+
+    def search_case_evidence(
+        self,
+        case_id: str,
+        query: str,
+        investigator: AuthenticatedInvestigator,
+        limit: int = 5,
+    ):
+        """Phase D: Connect RAG retrieval to core case investigation workflow.
+
+        Enforces MOD-03 read authorization on case, delegates to RAGRetrievalService,
+        and returns case-isolated citations and excerpts with full provenance.
+        """
+        from app.services.rag_retrieval_service import RAGRetrievalService
+        case = self.repo.get_by_case_id(case_id)
+        if not case:
+            raise CaseNotFoundException(case_id)
+        self.authz.check_can_read_case(investigator, case)
+
+        rag_service = RAGRetrievalService(self.repo.db, authz_service=self.authz)
+        return rag_service.search(
+            case_id=case_id,
+            query=query,
+            limit=limit,
+            investigator=investigator,
         )

@@ -1,0 +1,397 @@
+<Activity mc:Ignorable="sap sap2010" x:Class="Main" this:Main.in_CaseId="SAKSHI-TEST-2026-002" this:Main.in_EvidenceFilePath="C:\main project\test-data\SAKSHI_Synthetic_Evidence_RAG_Test.pdf" this:Main.in_EvidenceCategory="DOCUMENT_PDF" this:Main.in_DeclaredMimeType="application/pdf" this:Main.in_ConfigPath="C:\main project\uipath\SakshiEvidencePipeline\Config.local.json" xmlns="http://schemas.microsoft.com/netfx/2009/xaml/activities" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" xmlns:njl="clr-namespace:Newtonsoft.Json.Linq;assembly=Newtonsoft.Json" xmlns:s="clr-namespace:System;assembly=System.Private.CoreLib" xmlns:sap="http://schemas.microsoft.com/netfx/2009/xaml/activities/presentation" xmlns:sap2010="http://schemas.microsoft.com/netfx/2010/xaml/activities/presentation" xmlns:scg="clr-namespace:System.Collections.Generic;assembly=System.Private.CoreLib" xmlns:sco="clr-namespace:System.Collections.ObjectModel;assembly=System.Private.CoreLib" xmlns:this="clr-namespace:" xmlns:ui="http://schemas.uipath.com/workflow/activities" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <x:Members>
+    <x:Property Name="in_CaseId" Type="InArgument(x:String)" />
+    <x:Property Name="in_EvidenceFilePath" Type="InArgument(x:String)" />
+    <x:Property Name="in_EvidenceCategory" Type="InArgument(x:String)" />
+    <x:Property Name="in_DeclaredMimeType" Type="InArgument(x:String)" />
+    <x:Property Name="in_ConfigPath" Type="InArgument(x:String)" />
+    <x:Property Name="out_OverallStatus" Type="OutArgument(x:String)" />
+    <x:Property Name="out_EvidenceId" Type="OutArgument(x:String)" />
+    <x:Property Name="out_WormStorageReference" Type="OutArgument(x:String)" />
+    <x:Property Name="out_Sha256Checksum" Type="OutArgument(x:String)" />
+    <x:Property Name="out_Message" Type="OutArgument(x:String)" />
+  </x:Members>
+  <VisualBasic.Settings>
+    <x:Null />
+  </VisualBasic.Settings>
+  <sap:VirtualizedContainerService.HintSize>850,2100</sap:VirtualizedContainerService.HintSize>
+  <sap2010:WorkflowViewState.IdRef>Main_1</sap2010:WorkflowViewState.IdRef>
+  <TextExpression.NamespacesForImplementation>
+    <sco:Collection x:TypeArguments="x:String">
+      <x:String>GlobalConstantsNamespace</x:String>
+      <x:String>GlobalVariablesNamespace</x:String>
+      <x:String>System</x:String>
+      <x:String>System.Collections.Generic</x:String>
+      <x:String>System.Collections.ObjectModel</x:String>
+      <x:String>System.Linq</x:String>
+      <x:String>UiPath.Core</x:String>
+      <x:String>UiPath.Core.Activities</x:String>
+    </sco:Collection>
+  </TextExpression.NamespacesForImplementation>
+  <TextExpression.ReferencesForImplementation>
+    <sco:Collection x:TypeArguments="AssemblyReference">
+      <AssemblyReference>UiPath.System.Activities</AssemblyReference>
+      <AssemblyReference>System.Linq</AssemblyReference>
+      <AssemblyReference>System.ObjectModel</AssemblyReference>
+      <AssemblyReference>System.ComponentModel.TypeConverter</AssemblyReference>
+    </sco:Collection>
+  </TextExpression.ReferencesForImplementation>
+  <Sequence DisplayName="Sakshi Evidence Pipeline Master Workflow" sap:VirtualizedContainerService.HintSize="1139,7147" sap2010:WorkflowViewState.IdRef="Sequence_1">
+    <Sequence.Variables>
+      <Variable x:TypeArguments="x:String" Default="Config.json" Name="configFilePath" />
+      <Variable x:TypeArguments="x:String" Name="rawConfigText" />
+      <Variable x:TypeArguments="njl:JObject" Name="configObj" />
+      <Variable x:TypeArguments="x:String" Name="apiBaseUrl" />
+      <Variable x:TypeArguments="x:String" Name="authenticationMode" />
+      <Variable x:TypeArguments="x:String" Name="investigatorId" />
+      <Variable x:TypeArguments="x:String" Name="investigatorRole" />
+      <Variable x:TypeArguments="x:String" Name="investigatorJurisdiction" />
+      <Variable x:TypeArguments="x:Int32" Default="30000" Name="timeoutMs" />
+      <Variable x:TypeArguments="x:Int32" Default="3" Name="maxRetries" />
+      <Variable x:TypeArguments="x:Int32" Default="5" Name="retryDelaySec" />
+      <Variable x:TypeArguments="x:Int32" Default="0" Name="currentAttempt" />
+      <Variable x:TypeArguments="x:Boolean" Default="False" Name="isComplete" />
+      <Variable x:TypeArguments="x:String" Name="activeEvidenceId" />
+      <Variable x:TypeArguments="x:String" Name="pipelineEndpointUrl" />
+      <Variable x:TypeArguments="x:Int32" Name="httpStatusCode" />
+      <Variable x:TypeArguments="x:String" Name="httpResponseBody" />
+      <Variable x:TypeArguments="njl:JObject" Name="jsonResult" />
+      <Variable x:TypeArguments="x:Boolean" Default="False" Name="isRetryable" />
+    </Sequence.Variables>
+    <sap:WorkflowViewStateService.ViewState>
+      <scg:Dictionary x:TypeArguments="x:String, x:Object">
+        <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+      </scg:Dictionary>
+    </sap:WorkflowViewStateService.ViewState>
+    <If Condition="[String.IsNullOrWhiteSpace(in_CaseId) OrElse String.IsNullOrWhiteSpace(in_EvidenceFilePath) OrElse Not System.IO.File.Exists(in_EvidenceFilePath)]" DisplayName="Validate Required Main Inputs" sap:VirtualizedContainerService.HintSize="768,1387" sap2010:WorkflowViewState.IdRef="If_ValidateMainInputs">
+      <If.Then>
+        <Sequence DisplayName="Reject Invalid Main Inputs" sap:VirtualizedContainerService.HintSize="450,1224" sap2010:WorkflowViewState.IdRef="Sequence_InvalidMainInputs">
+          <sap:WorkflowViewStateService.ViewState>
+            <scg:Dictionary x:TypeArguments="x:String, x:Object">
+              <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+            </scg:Dictionary>
+          </sap:WorkflowViewStateService.ViewState>
+          <Assign DisplayName="Set Invalid Input Status" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidInputStatus">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">INVALID_INPUT</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Invalid Input Evidence ID" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidInputEvidenceId">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_EvidenceId]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[String.Empty]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Invalid Input WORM Reference" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidInputWormReference">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_WormStorageReference]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[String.Empty]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Invalid Input Checksum" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidInputChecksum">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_Sha256Checksum]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[String.Empty]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Invalid Input Message" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_InvalidInputMessage">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_Message]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">[If(String.IsNullOrWhiteSpace(in_CaseId), "Input validation failed: in_CaseId is required before running Main.xaml.", If(String.IsNullOrWhiteSpace(in_EvidenceFilePath), "Input validation failed: in_EvidenceFilePath is required for initial upload.", "Input validation failed: in_EvidenceFilePath does not point to an existing file accessible to the robot."))]</InArgument>
+            </Assign.Value>
+          </Assign>
+          <ui:LogMessage DisplayName="Log Invalid Main Inputs" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="LogMessage_4" Level="Error" Message="[out_Message + &quot; No HTTP request was sent.&quot;]" />
+          <Throw DisplayName="Stop on Invalid Main Inputs" Exception="[New System.ArgumentException(out_Message)]" sap:VirtualizedContainerService.HintSize="416,114" sap2010:WorkflowViewState.IdRef="Throw_InvalidMainInputs" />
+        </Sequence>
+      </If.Then>
+    </If>
+    <ui:LogMessage DisplayName="Log Startup" sap:VirtualizedContainerService.HintSize="768,175" sap2010:WorkflowViewState.IdRef="LogMessage_1" Level="Info" Message="[&quot;Starting SAKSHI UiPath Evidence Pipeline execution for Case: &quot; + in_CaseId]" />
+    <If Condition="[Not String.IsNullOrEmpty(in_ConfigPath)]" DisplayName="Override Config Path if provided" sap:VirtualizedContainerService.HintSize="768,328" sap2010:WorkflowViewState.IdRef="If_1">
+      <If.Then>
+        <Assign sap:VirtualizedContainerService.HintSize="334,143" sap2010:WorkflowViewState.IdRef="Assign_1">
+          <Assign.To>
+            <OutArgument x:TypeArguments="x:String">[configFilePath]</OutArgument>
+          </Assign.To>
+          <Assign.Value>
+            <InArgument x:TypeArguments="x:String">[in_ConfigPath]</InArgument>
+          </Assign.Value>
+        </Assign>
+      </If.Then>
+    </If>
+    <ui:ReadTextFile File="{x:Null}" Content="[rawConfigText]" DisplayName="Read Config JSON" FileName="[configFilePath]" sap:VirtualizedContainerService.HintSize="768,113" sap2010:WorkflowViewState.IdRef="ReadTextFile_1" />
+    <ui:DeserializeJson x:TypeArguments="njl:JObject" DisplayName="Deserialize Config" sap:VirtualizedContainerService.HintSize="768,92" sap2010:WorkflowViewState.IdRef="DeserializeJson_1" JsonObject="[configObj]" JsonString="[rawConfigText]" />
+    <Assign DisplayName="Extract ApiBaseUrl" sap:VirtualizedContainerService.HintSize="768,175" sap2010:WorkflowViewState.IdRef="Assign_2">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[apiBaseUrl]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[configObj("Settings")("ApiBaseUrl").ToString]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Extract Configured Authentication Mode" sap:VirtualizedContainerService.HintSize="768,175" sap2010:WorkflowViewState.IdRef="Assign_3">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[authenticationMode]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[configObj("Settings")("AuthenticationMode").ToString]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Extract Development Investigator ID" sap:VirtualizedContainerService.HintSize="768,60" sap2010:WorkflowViewState.IdRef="Assign_DevelopmentInvestigatorId">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[investigatorId]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[configObj("Settings")("DevelopmentInvestigatorId").ToString]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Extract Development Investigator Role" sap:VirtualizedContainerService.HintSize="768,60" sap2010:WorkflowViewState.IdRef="Assign_DevelopmentInvestigatorRole">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[investigatorRole]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[configObj("Settings")("DevelopmentInvestigatorRole").ToString]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <Assign DisplayName="Extract Development Investigator Jurisdiction" sap:VirtualizedContainerService.HintSize="768,60" sap2010:WorkflowViewState.IdRef="Assign_DevelopmentInvestigatorJurisdiction">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[investigatorJurisdiction]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[configObj("Settings")("DevelopmentInvestigatorJurisdiction").ToString]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <If Condition="[Not String.Equals(authenticationMode, &quot;development&quot;, StringComparison.OrdinalIgnoreCase)]" DisplayName="Reject Unsupported Authentication Mode" sap:VirtualizedContainerService.HintSize="768,655" sap2010:WorkflowViewState.IdRef="If_RejectUnsupportedAuthenticationMode">
+      <If.Then>
+        <Sequence DisplayName="Stop Before Unauthenticated Request" sap:VirtualizedContainerService.HintSize="718,492" sap2010:WorkflowViewState.IdRef="Sequence_StopBeforeUnauthenticatedRequest">
+          <sap:WorkflowViewStateService.ViewState>
+            <scg:Dictionary x:TypeArguments="x:String, x:Object">
+              <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+            </scg:Dictionary>
+          </sap:WorkflowViewStateService.ViewState>
+          <Assign DisplayName="Set Authentication Configuration Status" sap:VirtualizedContainerService.HintSize="684,60" sap2010:WorkflowViewState.IdRef="Assign_AuthenticationConfigurationStatus">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">AUTHENTICATION_CONFIGURATION_REQUIRED</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Authentication Configuration Message" sap:VirtualizedContainerService.HintSize="684,175" sap2010:WorkflowViewState.IdRef="Assign_AuthenticationConfigurationMessage">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_Message]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">This UiPath project only sends X-Investigator headers when AuthenticationMode is development. OIDC and Firebase require a managed robot authentication boundary; no HTTP request was sent.</InArgument>
+            </Assign.Value>
+          </Assign>
+          <ui:LogMessage DisplayName="Log Unsupported Authentication Mode" sap:VirtualizedContainerService.HintSize="684,175" sap2010:WorkflowViewState.IdRef="LogMessage_5" Level="Error" Message="[out_Message]" />
+          <Throw DisplayName="Stop Before Unauthenticated Request" Exception="[New System.InvalidOperationException(out_Message)]" sap:VirtualizedContainerService.HintSize="200,22" sap2010:WorkflowViewState.IdRef="Throw_UnsupportedAuthenticationMode" />
+        </Sequence>
+      </If.Then>
+    </If>
+    <If Condition="[String.IsNullOrWhiteSpace(investigatorId) OrElse String.IsNullOrWhiteSpace(investigatorRole) OrElse String.IsNullOrWhiteSpace(investigatorJurisdiction)]" DisplayName="Require Explicit Development Identity" sap:VirtualizedContainerService.HintSize="768,770" sap2010:WorkflowViewState.IdRef="If_RequireExplicitDevelopmentIdentity">
+      <If.Then>
+        <Sequence DisplayName="Stop Before Incomplete Development Authentication" sap:VirtualizedContainerService.HintSize="450,607" sap2010:WorkflowViewState.IdRef="Sequence_StopBeforeIncompleteDevelopmentAuthentication">
+          <sap:WorkflowViewStateService.ViewState>
+            <scg:Dictionary x:TypeArguments="x:String, x:Object">
+              <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+            </scg:Dictionary>
+          </sap:WorkflowViewStateService.ViewState>
+          <Assign DisplayName="Set Missing Development Identity Status" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_MissingDevelopmentIdentityStatus">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">AUTHENTICATION_CONFIGURATION_REQUIRED</InArgument>
+            </Assign.Value>
+          </Assign>
+          <Assign DisplayName="Set Missing Development Identity Message" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_MissingDevelopmentIdentityMessage">
+            <Assign.To>
+              <OutArgument x:TypeArguments="x:String">[out_Message]</OutArgument>
+            </Assign.To>
+            <Assign.Value>
+              <InArgument x:TypeArguments="x:String">Development authentication requires DevelopmentInvestigatorId, DevelopmentInvestigatorRole, and DevelopmentInvestigatorJurisdiction in an untracked local config file. No HTTP request was sent.</InArgument>
+            </Assign.Value>
+          </Assign>
+          <ui:LogMessage DisplayName="Log Missing Development Identity" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="LogMessage_6" Level="Error" Message="[out_Message]" />
+          <Throw DisplayName="Stop Before Incomplete Development Authentication" Exception="[New System.InvalidOperationException(out_Message)]" sap:VirtualizedContainerService.HintSize="200,22" sap2010:WorkflowViewState.IdRef="Throw_MissingDevelopmentIdentity" />
+        </Sequence>
+      </If.Then>
+    </If>
+    <Assign DisplayName="Resolve Pipeline Endpoint URL" sap:VirtualizedContainerService.HintSize="768,175" sap2010:WorkflowViewState.IdRef="Assign_4">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[pipelineEndpointUrl]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[apiBaseUrl + "/cases/" + in_CaseId + "/evidence/pipeline"]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <ui:InterruptibleWhile Condition="[Not isComplete And currentAttempt &lt; maxRetries]" CurrentIndex="[currentAttempt]" DisplayName="Execution / Retry Loop" sap:VirtualizedContainerService.HintSize="768,2558" sap2010:WorkflowViewState.IdRef="InterruptibleWhile_1">
+      <ui:InterruptibleWhile.Body>
+        <Sequence DisplayName="Invoke Stage &amp; Handle Response" sap:VirtualizedContainerService.HintSize="680,2427" sap2010:WorkflowViewState.IdRef="Sequence_2">
+          <sap:WorkflowViewStateService.ViewState>
+            <scg:Dictionary x:TypeArguments="x:String, x:Object">
+              <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+            </scg:Dictionary>
+          </sap:WorkflowViewStateService.ViewState>
+          <TryCatch DisplayName="Try Submit / Resume Pipeline" sap:VirtualizedContainerService.HintSize="646,2367" sap2010:WorkflowViewState.IdRef="TryCatch_1">
+            <TryCatch.Try>
+              <Sequence DisplayName="Pipeline Call Block" sap:VirtualizedContainerService.HintSize="644,657" sap2010:WorkflowViewState.IdRef="Sequence_3">
+                <sap:WorkflowViewStateService.ViewState>
+                  <scg:Dictionary x:TypeArguments="x:String, x:Object">
+                    <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+                  </scg:Dictionary>
+                </sap:WorkflowViewStateService.ViewState>
+                <If Condition="[String.IsNullOrEmpty(activeEvidenceId)]" DisplayName="Check If New Intake or Resume" sap:VirtualizedContainerService.HintSize="610,218" sap2010:WorkflowViewState.IdRef="If_2">
+                  <If.Then>
+                    <ui:InvokeWorkflowFile ArgumentsVariable="{x:Null}" ContinueOnError="{x:Null}" DisplayName="Submit New Evidence" sap:VirtualizedContainerService.HintSize="334,112" sap2010:WorkflowViewState.IdRef="InvokeWorkflowFile_1" UnSafe="False" WorkflowFileName="SubmitEvidencePipeline.xaml">
+                      <ui:InvokeWorkflowFile.Arguments>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_EndpointUrl">[pipelineEndpointUrl]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_EvidenceFilePath">[in_EvidenceFilePath]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_EvidenceCategory">[If(Not String.IsNullOrEmpty(in_EvidenceCategory), in_EvidenceCategory, configObj("Settings")("DefaultEvidenceCategory").ToString)]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_DeclaredMimeType">[If(Not String.IsNullOrEmpty(in_DeclaredMimeType), in_DeclaredMimeType, configObj("Settings")("DefaultDeclaredMimeType").ToString)]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_InvestigatorId">[investigatorId]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_InvestigatorRole">[investigatorRole]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_InvestigatorJurisdiction">[investigatorJurisdiction]</InArgument>
+                        <OutArgument x:TypeArguments="x:Int32" x:Key="out_StatusCode">[httpStatusCode]</OutArgument>
+                        <OutArgument x:TypeArguments="x:String" x:Key="out_ResponseBody">[httpResponseBody]</OutArgument>
+                      </ui:InvokeWorkflowFile.Arguments>
+                    </ui:InvokeWorkflowFile>
+                  </If.Then>
+                  <If.Else>
+                    <ui:InvokeWorkflowFile ArgumentsVariable="{x:Null}" ContinueOnError="{x:Null}" DisplayName="Resume Existing Evidence" sap:VirtualizedContainerService.HintSize="334,112" sap2010:WorkflowViewState.IdRef="InvokeWorkflowFile_2" UnSafe="False" WorkflowFileName="SubmitEvidencePipeline.xaml">
+                      <ui:InvokeWorkflowFile.Arguments>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_EndpointUrl">[pipelineEndpointUrl]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_EvidenceId">[activeEvidenceId]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_InvestigatorId">[investigatorId]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_InvestigatorRole">[investigatorRole]</InArgument>
+                        <InArgument x:TypeArguments="x:String" x:Key="in_InvestigatorJurisdiction">[investigatorJurisdiction]</InArgument>
+                        <OutArgument x:TypeArguments="x:Int32" x:Key="out_StatusCode">[httpStatusCode]</OutArgument>
+                        <OutArgument x:TypeArguments="x:String" x:Key="out_ResponseBody">[httpResponseBody]</OutArgument>
+                      </ui:InvokeWorkflowFile.Arguments>
+                    </ui:InvokeWorkflowFile>
+                  </If.Else>
+                </If>
+                <ui:InvokeWorkflowFile ArgumentsVariable="{x:Null}" ContinueOnError="{x:Null}" DisplayName="Process Pipeline Response" sap:VirtualizedContainerService.HintSize="610,112" sap2010:WorkflowViewState.IdRef="InvokeWorkflowFile_3" UnSafe="False" WorkflowFileName="ProcessPipelineResponse.xaml">
+                  <ui:InvokeWorkflowFile.Arguments>
+                    <InArgument x:TypeArguments="x:Int32" x:Key="in_StatusCode">[httpStatusCode]</InArgument>
+                    <InArgument x:TypeArguments="x:String" x:Key="in_ResponseBody">[httpResponseBody]</InArgument>
+                    <InArgument x:TypeArguments="x:String" x:Key="in_EvidenceId">[activeEvidenceId]</InArgument>
+                    <OutArgument x:TypeArguments="x:String" x:Key="out_OverallStatus">[out_OverallStatus]</OutArgument>
+                    <OutArgument x:TypeArguments="x:String" x:Key="out_EvidenceId">[activeEvidenceId]</OutArgument>
+                    <OutArgument x:TypeArguments="x:String" x:Key="out_WormStorageReference">[out_WormStorageReference]</OutArgument>
+                    <OutArgument x:TypeArguments="x:String" x:Key="out_Sha256Checksum">[out_Sha256Checksum]</OutArgument>
+                    <OutArgument x:TypeArguments="x:String" x:Key="out_Message">[out_Message]</OutArgument>
+                    <OutArgument x:TypeArguments="x:Boolean" x:Key="out_IsRetryable">[isRetryable]</OutArgument>
+                    <OutArgument x:TypeArguments="x:Boolean" x:Key="out_IsComplete">[isComplete]</OutArgument>
+                  </ui:InvokeWorkflowFile.Arguments>
+                </ui:InvokeWorkflowFile>
+                <If Condition="[Not isComplete And isRetryable]" DisplayName="Backoff Delay If Retryable" sap:VirtualizedContainerService.HintSize="610,267" sap2010:WorkflowViewState.IdRef="If_3">
+                  <If.Then>
+                    <Delay DisplayName="Exponential Backoff Delay" Duration="[TimeSpan.FromSeconds(retryDelaySec * (currentAttempt + 1))]" sap:VirtualizedContainerService.HintSize="334,91" sap2010:WorkflowViewState.IdRef="Delay_1" />
+                  </If.Then>
+                </If>
+              </Sequence>
+            </TryCatch.Try>
+            <TryCatch.Catches>
+              <Catch x:TypeArguments="s:Exception" sap:VirtualizedContainerService.HintSize="656,21" sap2010:WorkflowViewState.IdRef="Catch`1_1">
+                <sap:WorkflowViewStateService.ViewState>
+                  <scg:Dictionary x:TypeArguments="x:String, x:Object">
+                    <x:Boolean x:Key="IsExpanded">False</x:Boolean>
+                  </scg:Dictionary>
+                </sap:WorkflowViewStateService.ViewState>
+                <ActivityAction x:TypeArguments="s:Exception">
+                  <ActivityAction.Argument>
+                    <DelegateInArgument x:TypeArguments="s:Exception" Name="exception" />
+                  </ActivityAction.Argument>
+                  <Sequence DisplayName="Handle General Network / Communication Exception" sap:VirtualizedContainerService.HintSize="644,1488" sap2010:WorkflowViewState.IdRef="Sequence_4">
+                    <sap:WorkflowViewStateService.ViewState>
+                      <scg:Dictionary x:TypeArguments="x:String, x:Object">
+                        <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+                      </scg:Dictionary>
+                    </sap:WorkflowViewStateService.ViewState>
+                    <ui:LogMessage DisplayName="Log Transport Error" sap:VirtualizedContainerService.HintSize="610,175" sap2010:WorkflowViewState.IdRef="LogMessage_2" Level="Warn" Message="[&quot;Communication failure during pipeline run: &quot; + exception.Message + &quot;. Attempt: &quot; + currentAttempt.ToString]" />
+                    <If Condition="[String.IsNullOrEmpty(activeEvidenceId)]" DisplayName="Guard Against Unreconciled Initial Upload Resubmission" sap:VirtualizedContainerService.HintSize="610,1253" sap2010:WorkflowViewState.IdRef="If_4">
+                      <If.Then>
+                        <Sequence DisplayName="Block Ambiguous Initial Resubmission" sap:VirtualizedContainerService.HintSize="450,926" sap2010:WorkflowViewState.IdRef="Sequence_5">
+                          <sap:WorkflowViewStateService.ViewState>
+                            <scg:Dictionary x:TypeArguments="x:String, x:Object">
+                              <x:Boolean x:Key="IsExpanded">True</x:Boolean>
+                            </scg:Dictionary>
+                          </sap:WorkflowViewStateService.ViewState>
+                          <Assign DisplayName="Mark Complete on Ambiguous Initial Failure" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_7">
+                            <Assign.To>
+                              <OutArgument x:TypeArguments="x:Boolean">[isComplete]</OutArgument>
+                            </Assign.To>
+                            <Assign.Value>
+                              <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                            </Assign.Value>
+                          </Assign>
+                          <Assign DisplayName="Set Non-Retryable for Ambiguous Initial Upload" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_8">
+                            <Assign.To>
+                              <OutArgument x:TypeArguments="x:Boolean">[isRetryable]</OutArgument>
+                            </Assign.To>
+                            <Assign.Value>
+                              <InArgument x:TypeArguments="x:Boolean">False</InArgument>
+                            </Assign.Value>
+                          </Assign>
+                          <Assign DisplayName="Set Status for Ambiguous Timeout" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_9">
+                            <Assign.To>
+                              <OutArgument x:TypeArguments="x:String">[out_OverallStatus]</OutArgument>
+                            </Assign.To>
+                            <Assign.Value>
+                              <InArgument x:TypeArguments="x:String">TRANSPORT_TIMEOUT_UNRECONCILED</InArgument>
+                            </Assign.Value>
+                          </Assign>
+                          <Assign DisplayName="Set Message for Ambiguous Timeout" sap:VirtualizedContainerService.HintSize="416,175" sap2010:WorkflowViewState.IdRef="Assign_10">
+                            <Assign.To>
+                              <OutArgument x:TypeArguments="x:String">[out_Message]</OutArgument>
+                            </Assign.To>
+                            <Assign.Value>
+                              <InArgument x:TypeArguments="x:String">["Transport failure during initial evidence upload before an evidence ID was confirmed. Automated resubmission is blocked to prevent duplicate intake records. Reconcile evidence via GET /cases/" + in_CaseId + "/evidence."]</InArgument>
+                            </Assign.Value>
+                          </Assign>
+                          <ui:LogMessage DisplayName="Log Ambiguous Timeout Alert" sap:VirtualizedContainerService.HintSize="416,166" sap2010:WorkflowViewState.IdRef="LogMessage_7" Level="Error" Message="[out_Message]" />
+                        </Sequence>
+                      </If.Then>
+                      <If.Else>
+                        <Assign DisplayName="Allow Resume Retry" sap:VirtualizedContainerService.HintSize="450,143" sap2010:WorkflowViewState.IdRef="Assign_5">
+                          <Assign.To>
+                            <OutArgument x:TypeArguments="x:Boolean">[isRetryable]</OutArgument>
+                          </Assign.To>
+                          <Assign.Value>
+                            <InArgument x:TypeArguments="x:Boolean">True</InArgument>
+                          </Assign.Value>
+                        </Assign>
+                      </If.Else>
+                    </If>
+                  </Sequence>
+                </ActivityAction>
+              </Catch>
+            </TryCatch.Catches>
+          </TryCatch>
+        </Sequence>
+      </ui:InterruptibleWhile.Body>
+    </ui:InterruptibleWhile>
+    <Assign sap:VirtualizedContainerService.HintSize="768,175" sap2010:WorkflowViewState.IdRef="Assign_6">
+      <Assign.To>
+        <OutArgument x:TypeArguments="x:String">[out_EvidenceId]</OutArgument>
+      </Assign.To>
+      <Assign.Value>
+        <InArgument x:TypeArguments="x:String">[activeEvidenceId]</InArgument>
+      </Assign.Value>
+    </Assign>
+    <ui:LogMessage DisplayName="Log Pipeline Terminal Summary" sap:VirtualizedContainerService.HintSize="768,166" sap2010:WorkflowViewState.IdRef="LogMessage_3" Level="Info" Message="[&quot;SAKSHI Pipeline Completed with status: '&quot; + out_OverallStatus + &quot;', EvidenceId: '&quot; + out_EvidenceId + &quot;', Message: '&quot; + out_Message + &quot;'&quot;]" />
+  </Sequence>
+</Activity>
