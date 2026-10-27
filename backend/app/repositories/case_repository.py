@@ -22,9 +22,10 @@ class CaseRepository:
 
     def find_existing_by_fir(self, fir_number: str, police_station: str) -> Optional[Case]:
         """
-        Check for duplicate case creation by checking FIR Number and originating police station.
+        Check for duplicate case creation by checking FIR Number and originating police station
+        among active investigation cases.
         """
-        cases = self.db.query(Case).all()
+        cases = self.db.query(Case).filter(Case.status != "ARCHIVED").all()
         for c in cases:
             meta = c.fir_metadata or {}
             if (
@@ -45,23 +46,39 @@ class CaseRepository:
         self,
         assigned_io_id: Optional[str] = None,
         skip: int = 0,
-        limit: int = 50
+        limit: int = 50,
+        include_archived: bool = False
     ) -> List[Case]:
-        """Retrieve paginated cases, optionally filtered by assigned IO."""
+        """Retrieve paginated cases, filtered by active status and optionally assigned IO."""
         query = self.db.query(Case)
+        if not include_archived:
+            query = query.filter(Case.status != "ARCHIVED")
         if assigned_io_id:
             query = query.filter(Case.assigned_io_id == assigned_io_id)
         return query.order_by(Case.created_at.desc()).offset(skip).limit(limit).all()
 
-    def count_cases(self, assigned_io_id: Optional[str] = None) -> int:
+    def count_cases(
+        self,
+        assigned_io_id: Optional[str] = None,
+        include_archived: bool = False
+    ) -> int:
         """Count total cases for pagination."""
         query = self.db.query(func.count(Case.id))
+        if not include_archived:
+            query = query.filter(Case.status != "ARCHIVED")
         if assigned_io_id:
             query = query.filter(Case.assigned_io_id == assigned_io_id)
         return query.scalar() or 0
 
     def update(self, case: Case) -> Case:
         """Persist modifications to an existing case entity."""
+        self.db.commit()
+        self.db.refresh(case)
+        return case
+
+    def archive_case(self, case: Case) -> Case:
+        """Mark case as ARCHIVED to remove from active register while preserving forensic data."""
+        case.status = "ARCHIVED"
         self.db.commit()
         self.db.refresh(case)
         return case

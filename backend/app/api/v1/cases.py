@@ -35,6 +35,8 @@ from app.schemas.intelligence import (
 from app.schemas.case import (
     CaseCreateRequest,
     CaseUpdateRequest,
+    CaseDeleteRequest,
+    CaseDeleteResponse,
     CaseAssignIORequest,
     CaseStageUpdateRequest,
     CaseResponse,
@@ -95,11 +97,17 @@ def create_case(
 def list_cases(
     skip: int = Query(0, ge=0, description="Offset for pagination"),
     limit: int = Query(50, ge=1, le=100, description="Page limit"),
+    include_archived: bool = Query(False, description="Include archived/deleted cases"),
     investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
     service: CaseService = Depends(get_case_service)
 ) -> CaseListResponse:
     """Returns cases assigned to or accessible by the authenticated investigator."""
-    cases, total = service.list_cases(investigator=investigator, skip=skip, limit=limit)
+    cases, total = service.list_cases(
+        investigator=investigator,
+        skip=skip,
+        limit=limit,
+        include_archived=include_archived
+    )
     return CaseListResponse(total=total, cases=cases)
 
 
@@ -130,6 +138,26 @@ def update_case(
 ) -> CaseResponse:
     """Updates permitted case fields. The Case ID is immutable and remains constant."""
     return service.update_case(case_id=case_id, payload=payload, investigator=investigator)
+
+
+@router.delete(
+    "/{case_id}",
+    response_model=CaseDeleteResponse,
+    summary="Safely archive/delete an individual case"
+)
+def delete_case(
+    case_id: str,
+    payload: Optional[CaseDeleteRequest] = None,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    service: CaseService = Depends(get_case_service)
+) -> CaseDeleteResponse:
+    """
+    Safely archives and removes an individual case from active register views.
+    Enforces authorization: requesting investigator must be assigned IO or supervisor/admin.
+    Preserves all evidence exhibits, hashes, chain-of-custody, and audit logs.
+    """
+    reason = payload.reason if payload else None
+    return service.delete_case(case_id=case_id, investigator=investigator, reason=reason)
 
 
 @router.post(

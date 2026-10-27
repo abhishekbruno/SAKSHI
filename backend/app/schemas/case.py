@@ -67,6 +67,20 @@ class CaseUpdateRequest(BaseModel):
     status: Optional[str] = Field(None, description="Operational status: ACTIVE, SUSPENDED, CLOSED")
 
 
+class CaseDeleteRequest(BaseModel):
+    """Payload to delete or archive an individual case inquiry."""
+    reason: Optional[str] = Field(default=None, max_length=500, description="Investigator reason for case deletion/archival")
+
+
+class CaseDeleteResponse(BaseModel):
+    """Response confirming safe forensic case archival and removal from active register."""
+    success: bool = True
+    case_id: str
+    status: str = "ARCHIVED"
+    message: str
+    archived_at: datetime
+
+
 class CaseAssignIORequest(BaseModel):
     """Payload to associate / reassign an Investigating Officer."""
     assigned_io_id: str = Field(..., min_length=2, max_length=128, description="Target Investigating Officer identifier")

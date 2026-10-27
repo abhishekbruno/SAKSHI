@@ -22,6 +22,7 @@ from app.services.audit_integration import AuditIntegrationService
 from app.schemas.case import (
     CaseCreateRequest,
     CaseUpdateRequest,
+    CaseDeleteResponse,
     CaseResponse,
     CaseWorkspaceRepresentation,
     Phase2IntegrationContract
@@ -166,7 +167,8 @@ class CaseService:
         self,
         investigator: AuthenticatedInvestigator,
         skip: int = 0,
-        limit: int = 50
+        limit: int = 50,
+        include_archived: bool = False
     ) -> Tuple[List[CaseResponse], int]:
         """List cases accessible to the authenticated investigator."""
         # MOD-03: Determine case visibility filter from authorization policy engine
@@ -175,9 +177,80 @@ class CaseService:
         elif investigator.role not in {"SUPERVISORY_OFFICER", "STATION_HEAD", "ADMIN"}:
             assigned_filter = investigator.investigator_id
 
-        cases = self.repo.list_cases(assigned_io_id=assigned_filter, skip=skip, limit=limit)
-        total = self.repo.count_cases(assigned_io_id=assigned_filter)
+        cases = self.repo.list_cases(
+            assigned_io_id=assigned_filter,
+            skip=skip,
+            limit=limit,
+            include_archived=include_archived
+        )
+        total = self.repo.count_cases(
+            assigned_io_id=assigned_filter,
+            include_archived=include_archived
+        )
         return [self.to_case_response(c) for c in cases], total
+
+    def delete_case(
+        self,
+        case_id: str,
+        investigator: AuthenticatedInvestigator,
+        reason: Optional[str] = None
+    ) -> CaseDeleteResponse:
+        """
+        Forensically safe case deletion / archival (MOD-01).
+        Archives the case record and removes it from the default active case register,
+        while strictly preserving all exhibits, forensic hashes, WORM locks, and custody audit trails.
+        Enforces MOD-03 backend authorization: requesting investigator must be assigned IO or supervisory/admin.
+        """
+        case = self.repo.get_by_case_id(case_id)
+        if not case:
+            raise CaseNotFoundException(case_id)
+
+        # 1. Authorization check
+        self.authz.check_can_delete_case(investigator, case)
+
+        # 2. Check if already archived
+        if case.status == "ARCHIVED":
+            return CaseDeleteResponse(
+                success=True,
+                case_id=case_id,
+                status="ARCHIVED",
+                message=f"Case '{case_id}' was already archived.",
+                archived_at=case.updated_at
+            )
+
+        # 3. Soft-delete / transition status to ARCHIVED
+        previous_status = case.status
+        archived_case = self.repo.archive_case(case)
+
+        # 4. Record tamper-evident audit log
+        audit_details = {
+            "previous_status": previous_status,
+            "new_status": "ARCHIVED",
+            "title": archived_case.title,
+            "fir_number": (archived_case.fir_metadata or {}).get("fir_number"),
+            "reason": reason or "Investigator requested removal from active register"
+        }
+        AuditIntegrationService.record_event(
+            action="CASE_DELETED",
+            investigator_id=investigator.investigator_id,
+            case_id=case_id,
+            details=audit_details
+        )
+
+        log_event(
+            event_type="CASE_DELETED",
+            message=f"Case '{case_id}' archived and removed from active register by '{investigator.investigator_id}'",
+            case_id=case_id,
+            investigator_id=investigator.investigator_id
+        )
+
+        return CaseDeleteResponse(
+            success=True,
+            case_id=case_id,
+            status="ARCHIVED",
+            message=f"Case '{case_id}' successfully removed from active register and archived. Exhibits and custody trails remain preserved.",
+            archived_at=archived_case.updated_at
+        )
 
     def update_case(
         self,

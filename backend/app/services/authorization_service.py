@@ -59,6 +59,7 @@ class Permission(str, Enum):
     CASE_CREATE = "case:create"
     CASE_READ = "case:read"
     CASE_UPDATE = "case:update"
+    CASE_DELETE = "case:delete"
     CASE_LIST = "case:list"
     CASE_ASSIGN = "case:assign"
     CASE_STAGE_UPDATE = "case:stage:update"
@@ -86,6 +87,7 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_CREATE,
         Permission.CASE_READ,
         Permission.CASE_UPDATE,
+        Permission.CASE_DELETE,
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
@@ -104,6 +106,7 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_CREATE,
         Permission.CASE_READ,
         Permission.CASE_UPDATE,
+        Permission.CASE_DELETE,
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
@@ -122,6 +125,7 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_CREATE,
         Permission.CASE_READ,
         Permission.CASE_UPDATE,
+        Permission.CASE_DELETE,
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
@@ -140,6 +144,7 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_CREATE,
         Permission.CASE_READ,
         Permission.CASE_UPDATE,
+        Permission.CASE_DELETE,
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
@@ -159,6 +164,7 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_CREATE,
         Permission.CASE_READ,
         Permission.CASE_UPDATE,
+        Permission.CASE_DELETE,
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
@@ -177,6 +183,7 @@ ROLE_PERMISSIONS: Dict[str, FrozenSet[str]] = {
         Permission.CASE_CREATE,
         Permission.CASE_READ,
         Permission.CASE_UPDATE,
+        Permission.CASE_DELETE,
         Permission.CASE_LIST,
         Permission.CASE_ASSIGN,
         Permission.CASE_STAGE_UPDATE,
@@ -493,8 +500,8 @@ class PolicyEngine:
         if action == "assign":
             return self._evaluate_assign_policy(ctx)
 
-        # For read/update/stage_update/evidence actions — check case-level access
-        if action in ("read", "update", "stage_update", "evidence:create", "evidence:read", "evidence:list", "evidence:validate", "evidence:scan", "evidence:commit", "evidence:verify", "evidence:object_lock", "evidence:encrypt", "evidence:decrypt"):
+        # For read/update/delete/stage_update/evidence actions — check case-level access
+        if action in ("read", "update", "delete", "stage_update", "evidence:create", "evidence:read", "evidence:list", "evidence:validate", "evidence:scan", "evidence:commit", "evidence:verify", "evidence:object_lock", "evidence:encrypt", "evidence:decrypt"):
             return self._evaluate_case_access(ctx)
 
         # DEFAULT DENY for unknown actions
@@ -679,6 +686,7 @@ class PolicyEngine:
             "create": Permission.CASE_CREATE,
             "read": Permission.CASE_READ,
             "update": Permission.CASE_UPDATE,
+            "delete": Permission.CASE_DELETE,
             "list": Permission.CASE_LIST,
             "assign": Permission.CASE_ASSIGN,
             "stage_update": Permission.CASE_STAGE_UPDATE,

@@ -488,6 +488,10 @@ class IAuthorizationService(ABC):
         pass
 
     @abstractmethod
+    def check_can_delete_case(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        pass
+
+    @abstractmethod
     def check_can_assign_io(self, investigator: AuthenticatedInvestigator, target_io_id: str, case: Optional[Case] = None) -> None:
         pass
 
@@ -577,6 +581,13 @@ class PolicyEngineAuthorizationService(IAuthorizationService):
     def check_can_modify_case(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
         ctx = self._AuthorizationContext.from_investigator(
             investigator, action="update", case=case
+        )
+        decision = self._engine.evaluate(ctx)
+        self._audit_and_enforce(decision, investigator)
+
+    def check_can_delete_case(self, investigator: AuthenticatedInvestigator, case: Case) -> None:
+        ctx = self._AuthorizationContext.from_investigator(
+            investigator, action="delete", case=case
         )
         decision = self._engine.evaluate(ctx)
         self._audit_and_enforce(decision, investigator)

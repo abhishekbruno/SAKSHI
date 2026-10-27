@@ -311,6 +311,15 @@ const Api = {
     return this.handleResponse(res, "Registering case");
   },
 
+  async deleteCase(caseId, reason = "") {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}`, {
+      method: "DELETE",
+      headers: { ...this.getHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: reason || "Investigator requested removal" })
+    });
+    return this.handleResponse(res, "Deleting case record");
+  },
+
   async updateCaseStage(caseId, targetStage) {
     const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/stage`, {
       method: "POST",
@@ -1122,7 +1131,7 @@ const ContradictionAssessmentEvaluator = {
         number: "Assessment in progress",
         isTextState: true,
         subtext: "Comparing exhibits for timeline and claim discrepancies...",
-        colorClass: "var(--info-text, #3b82f6)",
+        colorClass: "var(--primary, #287D78)",
         badgeClass: "badge-info",
         routeTab: "analysis",
         actionText: null
@@ -2520,7 +2529,10 @@ const ScreenCases = {
         </div>
         <div class="case-row-action">
           <span><strong>Next:</strong> ${nextActions[c.lifecycle_stage] || "Open case workspace"}</span>
-          <button class="btn btn-secondary btn-sm" aria-label="Open ${Formatters.escapeHtml(c.title)}" onclick="event.stopPropagation(); Router.selectCaseAndRoute('${c.case_id}', 'overview')">Open</button>
+          <div class="case-row-actions-group" style="display:flex; gap:6px; align-items:center;">
+            <button class="btn btn-secondary btn-sm" aria-label="Open ${Formatters.escapeHtml(c.title)}" onclick="event.stopPropagation(); Router.selectCaseAndRoute('${c.case_id}', 'overview')">Open</button>
+            <button class="btn btn-danger-outline btn-sm" aria-label="Delete ${Formatters.escapeHtml(c.title)}" title="Delete or archive this case inquiry" onclick="event.stopPropagation(); ScreenCases.confirmDeleteCase('${c.case_id}')">Delete</button>
+          </div>
         </div>
       </article>
     `;
@@ -3075,6 +3087,105 @@ const ScreenCases = {
     `;
 
     UI.openModal("Case Registered &bull; Next Action: Evidence Collection", bodyHtml, footerHtml);
+  },
+
+  async loadCases() {
+    await this.render();
+  },
+
+  confirmDeleteCase(caseId) {
+    const c = (State.cases || []).find(x => x.case_id === caseId) || {};
+    const title = c.title || caseId;
+    const fir = (c.fir_metadata && c.fir_metadata.fir_number) || "No FIR Recorded";
+
+    const bodyHtml = `
+      <div class="case-delete-dialog-content">
+        <div style="display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px;">
+          <div style="width: 36px; height: 36px; border-radius: 50%; background: var(--danger-bg); color: var(--danger); display: flex; align-items: center; justify-content: center; font-size: 1.15rem; flex-shrink: 0;">
+            ⚠️
+          </div>
+          <div>
+            <h3 style="font-size: 1.05rem; font-weight: 700; color: var(--text-main); margin-bottom: 4px;">Delete this case?</h3>
+            <p style="font-size: 0.84rem; color: var(--text-secondary); line-height: 1.45;">
+              You are about to delete or remove the following case from the active register:
+            </p>
+          </div>
+        </div>
+
+        <div style="background: var(--bg-card-subtle); border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 12px 14px; margin-bottom: 16px;">
+          <div style="font-size: 0.82rem; margin-bottom: 6px;"><strong>Case title:</strong> <span style="color: var(--text-main);">${Formatters.escapeHtml(title)}</span></div>
+          <div style="font-size: 0.82rem; margin-bottom: 6px; font-family: var(--font-mono);"><strong>Case ID:</strong> <span style="color: var(--primary);">${Formatters.escapeHtml(caseId)}</span></div>
+          <div style="font-size: 0.82rem; font-family: var(--font-mono);"><strong>FIR number:</strong> <span style="color: var(--text-main);">${Formatters.escapeHtml(fir)}</span></div>
+        </div>
+
+        <div style="border-left: 3px solid var(--attention); background: var(--attention-bg); padding: 10px 12px; border-radius: 0 var(--radius-sm) var(--radius-sm) 0; margin-bottom: 14px; font-size: 0.8rem; color: var(--attention-text); line-height: 1.4;">
+          <strong>Forensic Data Protection:</strong> This operation safely archives the case record and removes it from active register views. Evidence exhibits, cryptographic integrity hashes, chain-of-custody history, and audit logs are strictly preserved in accordance with statutory retention obligations.
+        </div>
+
+        <p style="font-size: 0.78rem; color: var(--text-dim); line-height: 1.4; margin-bottom: 8px;">
+          This action cannot be assumed to be reversible by station officers without supervisory authorization.
+        </p>
+
+        <div id="deleteCaseErrorNotice" style="display: none; margin-top: 10px; padding: 8px 12px; background: var(--danger-bg); border: 1px solid var(--danger-border); border-radius: var(--radius-sm); color: var(--danger); font-size: 0.8rem;"></div>
+      </div>
+    `;
+
+    const footerHtml = `
+      <button type="button" class="btn btn-secondary" id="btnCancelDeleteCase" onclick="UI.closeModal()">Cancel</button>
+      <button type="button" class="btn btn-danger" id="btnConfirmDeleteCase" onclick="ScreenCases.executeDeleteCase('${Formatters.escapeHtml(caseId)}')">Confirm Delete</button>
+    `;
+
+    UI.openModal("Confirm Individual Case Deletion", bodyHtml, footerHtml);
+  },
+
+  async executeDeleteCase(caseId) {
+    if (this._isDeletingCase) return;
+    this._isDeletingCase = true;
+
+    const btnConfirm = document.getElementById("btnConfirmDeleteCase");
+    const btnCancel = document.getElementById("btnCancelDeleteCase");
+    const errBox = document.getElementById("deleteCaseErrorNotice");
+
+    if (btnConfirm) {
+      btnConfirm.disabled = true;
+      btnConfirm.textContent = "Archiving...";
+    }
+    if (btnCancel) {
+      btnCancel.disabled = true;
+    }
+    if (errBox) {
+      errBox.style.display = "none";
+      errBox.textContent = "";
+    }
+
+    try {
+      const resp = await Api.deleteCase(caseId, "Investigator requested individual case deletion from active register");
+      UI.closeModal();
+      UI.showToast(resp.message || "Case successfully archived and removed from active register.", "success");
+
+      // Clean up active case context if target case was open
+      if (State.activeCaseId === caseId) {
+        resetActiveCaseState();
+      }
+
+      // Refresh case directory without full page reload
+      await ScreenCases.render();
+    } catch (err) {
+      if (btnConfirm) {
+        btnConfirm.disabled = false;
+        btnConfirm.textContent = "Confirm Delete";
+      }
+      if (btnCancel) {
+        btnCancel.disabled = false;
+      }
+      if (errBox) {
+        errBox.textContent = err.message || "Failed to delete case.";
+        errBox.style.display = "block";
+      }
+      UI.showToast(`Case deletion failed: ${err.message}`, "error");
+    } finally {
+      this._isDeletingCase = false;
+    }
   }
 };
 
@@ -7624,7 +7735,7 @@ const ScreenRAGSearch = {
               ${dossier.interactions.length === 0 ? `
                 <p style="color: var(--text-muted); font-size: 0.85rem; text-align: center; padding: 20px;">No reported interactions documented in docket.</p>
               ` : dossier.interactions.map(it => `
-                <div style="padding: 12px 14px; background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-sm); border-left: 3px solid #3b82f6;">
+                <div style="padding: 12px 14px; background: var(--bg-card); border: 1px solid var(--border-default); border-radius: var(--radius-sm); border-left: 3px solid var(--primary);">
                   <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
                     <strong style="color: var(--text-main); font-size: 0.88rem;">⏱️ ${Formatters.escapeHtml(it.reported_time || 'Uncertain Time')}</strong>
                     <span class="badge badge-neutral" style="font-size: 0.7rem;">Certainty: ${Formatters.escapeHtml(it.time_uncertainty)}</span>
@@ -10401,6 +10512,7 @@ function renderWorkspaceHeaderHtml(activeTab) {
       <div class="investigator-header-actions">
         <button class="btn btn-secondary btn-sm" onclick="Router.navigate('#/cases')">All cases</button>
         ${next ? `<button class="btn btn-primary btn-sm btn-stage-transition" onclick="handleStageTransition('${c.case_id}', '${next}')">${InvestigatorFirst.text((StageDisplayMap[next] || {}).short || "Continue investigation")}</button>` : ""}
+        <button class="btn btn-danger-outline btn-sm" onclick="ScreenCases.confirmDeleteCase('${c.case_id}')" title="Delete or archive this case inquiry">Delete Case</button>
       </div>
     </section>
     <nav class="case-workspace-tabs investigator-tabs" aria-label="Case workspace">
