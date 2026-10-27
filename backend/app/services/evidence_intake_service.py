@@ -289,6 +289,12 @@ class EvidenceIntakeService:
         investigator: AuthenticatedInvestigator,
     ) -> EvidenceResponse:
         """Retrieves a single registered evidence object, enforcing case isolation."""
+        if not case_id or str(case_id).strip() in {"null", "undefined", ""}:
+            raise CaseNotFoundException(case_id or "null")
+
+        if not evidence_id or str(evidence_id).strip() in {"null", "undefined", ""}:
+            raise EvidenceNotFoundException(evidence_id or "null")
+
         case = self.case_repo.get_by_case_id(case_id)
         if not case:
             raise CaseNotFoundException(case_id)

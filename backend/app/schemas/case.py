@@ -16,6 +16,8 @@ class FIRMetadata(BaseModel):
     report_date: Optional[str] = Field(None, description="ISO-8601 formatted date/time of FIR registration")
     jurisdiction_code: Optional[str] = Field(None, description="Territorial or district jurisdiction code")
     incident_location: Optional[str] = Field(None, description="Reported location of incident or discovery of body")
+    victim_name: Optional[str] = Field(None, description="Name of victim / deceased if identified")
+    complainant_name: Optional[str] = Field(None, description="Name of complainant / reporting person")
     additional_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Flexible legal/procedural metadata")
 
     @field_validator("fir_number")
@@ -145,6 +147,12 @@ class FIRAssistedExtractResponse(BaseModel):
     offense_sections: Optional[str] = Field(None, description="Extracted statutory penal sections")
     reported_narrative: Optional[str] = Field(None, description="Concise candidate occurrence narrative")
     source_passages: List[FIRSourcePassage] = Field(default_factory=list, description="Exact source quotes grounding extracted fields")
+    suggested_title: Optional[str] = Field(None, description="Suggested neutral case title derived from FIR particulars")
+    investigating_officer: Optional[str] = Field(None, description="Extracted investigating officer name if stated in FIR")
+    missing_fields: List[str] = Field(default_factory=list, description="List of important case fields not found in the source text")
+    ambiguous_fields: List[str] = Field(default_factory=list, description="Fields with conflicting or low-certainty extractions")
+    is_ocr_applied: bool = Field(False, description="Whether optical character recognition was executed")
+    ocr_limitation_notice: Optional[str] = Field(None, description="Honest disclosure if document contains scanned images without OCR")
     extraction_confidence: str = Field("CANDIDATE_EXTRACTION", description="Extraction certainty rating")
     disclaimer: str = Field(
         "Candidate extraction from submitted FIR document. "

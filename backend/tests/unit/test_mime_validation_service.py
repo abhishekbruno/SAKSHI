@@ -253,7 +253,7 @@ def test_disallowed_mime_type_rejected(db_session, active_case, mock_io1):
     intake_service = EvidenceIntakeService(db_session)
     metadata = EvidenceIntakeMetadata(
         evidence_category=EvidenceCategory.OTHER,
-        declared_mime_type="video/x-msvideo",  # not in ALLOWED_MIME_TYPES
+        declared_mime_type="application/x-msdos-program",  # not in ALLOWED_MIME_TYPES
     )
     ev = intake_service.register_evidence(
         case_id=active_case.case_id,

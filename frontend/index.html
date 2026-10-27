@@ -29,42 +29,31 @@
       <nav class="sidebar-nav">
         <div class="nav-section-title">Directory</div>
         <a href="#/cases" class="nav-link" id="navCases">
-          <span class="icon">📁</span>
           <span>Cases</span>
         </a>
 
         <div class="nav-section-title" id="caseWorkspaceSectionTitle">Investigation</div>
         <a href="#/cases/active/evidence" class="nav-link" id="navEvidence">
-          <span class="icon">📦</span>
           <span>Evidence</span>
           <span class="nav-badge" id="navEvidenceCount" style="display:none;">0</span>
         </a>
         <a href="#/cases/active/connections" class="nav-link" id="navConnections">
-          <span class="icon">🕸️</span>
-          <span>Entity Graph</span>
+          <span>Connections</span>
         </a>
         <a href="#/cases/active/timeline" class="nav-link" id="navTimeline">
-          <span class="icon">⏱️</span>
-          <span>Timeline</span>
+          <span>Timeline &amp; Scenarios</span>
         </a>
-        <a href="#/cases/active/findings" class="nav-link" id="navFindings">
-          <span class="icon">🔍</span>
-          <span>Review Findings</span>
+        <a href="#/cases/active/findings" class="nav-link" id="navFindings" title="Review Findings">
+          <span>Review Findings &amp; Contradictions</span>
         </a>
         <a href="#/cases/active/report" class="nav-link" id="navReport">
-          <span class="icon">📄</span>
           <span>Case Report</span>
-        </a>
-        <a href="#/cases/active/audit" class="nav-link" id="navAudit">
-          <span class="icon">📜</span>
-          <span>Activity & Audit</span>
         </a>
 
 
         <!-- Administration (shown only for authorized roles) -->
         <div class="nav-section-title" id="adminSectionTitle" style="display:none;">Administration</div>
-        <a href="#/officers" class="nav-link" id="navAdmin" style="display:none;">
-          <span class="icon">🛡️</span>
+        <a href="#/administration" class="nav-link" id="navAdmin" style="display:none;">
           <span>Administration</span>
         </a>
 
@@ -76,6 +65,7 @@
           <a href="#/cases/active/analysis" class="nav-link" id="navAnalysis">Analysis & Reasoning</a>
           <a href="#/cases/active/gaps" class="nav-link" id="navGaps">Investigation Gaps</a>
           <a href="#/cases/active/closure" class="nav-link" id="navClosure">Case Closure</a>
+          <a href="#/cases/active/audit" class="nav-link" id="navAudit">Activity & Audit</a>
           <a href="#/officers" class="nav-link" id="navOfficers">Officer Registry</a>
           <a href="#/settings" class="nav-link" id="navSettings">Settings</a>
         </div>
@@ -109,7 +99,7 @@
         <div class="header-right">
           <!-- Dual-Theme Toggle Button -->
           <button id="themeToggleBtn" class="theme-toggle-btn" title="Toggle Desk Mode (Light) / Control Room (Dark)">
-            <span id="themeToggleIcon">☀️</span>
+            <span id="themeToggleIcon" style="display:none;"></span>
             <span id="themeToggleText">Desk Mode</span>
           </button>
 
@@ -127,7 +117,6 @@
           </div>
 
           <button id="logoutBtn" class="theme-toggle-btn" title="Sign Out of Workstation">
-            <span>🚪</span>
             <span>Sign Out</span>
           </button>
         </div>
@@ -150,6 +139,6 @@
   <div id="toastContainer" class="toast-container"></div>
 
   <!-- Application Logic -->
-  <script src="app.js"></script>
+  <script src="app.js?v=targeted-ui-20261026"></script>
 </body>
 </html>

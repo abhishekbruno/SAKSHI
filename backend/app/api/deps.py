@@ -145,3 +145,10 @@ def get_evidence_extraction_service(db: Session = Depends(get_db)):
     from app.services.evidence_extraction_service import EvidenceExtractionService
     return EvidenceExtractionService(db)
 
+
+def get_evidence_intelligence_service(db: Session = Depends(get_db)):
+    """Dependency injecting EvidenceIntelligenceService wired with current DB session (Phase F.1)."""
+    from app.services.evidence_intelligence_service import EvidenceIntelligenceService
+    return EvidenceIntelligenceService(db)
+
+

@@ -156,9 +156,12 @@ const styleCss = fs.readFileSync("frontend/style.css", "utf8");
     assert(appJs.includes("Api.getExtractedFacts(caseId, evidenceId)"));
   });
 
-  test("Evidence drawer renders Section 2.5 Document Intelligence & Extracted Facts", () => {
-    assert(appJs.includes("Section 2.5 &bull; Document Intelligence & Extracted Facts"));
-    assert(appJs.includes("AI-Generated Preliminary Summary"));
+  test("Evidence drawer renders simplified officer-friendly sections (summary, facts, source passages, questions)", () => {
+    assert(appJs.includes("Document summary"));
+    assert(appJs.includes("Key facts and events"));
+    assert(appJs.includes("Source passages"));
+    assert(appJs.includes("Unresolved questions"));
+    assert(appJs.includes("Technical details and chain of custody"));
   });
 
   test("Evidence drawer includes fact re-extraction button and handler", () => {
@@ -184,10 +187,10 @@ const styleCss = fs.readFileSync("frontend/style.css", "utf8");
   });
 
   // ─── Suite 6: Live API Integration ───
-  console.log("\n-- Test Suite 6: Live API Integration (Synthetic Case SAKSHI-TEST-2026-002) --");
+  console.log("\n-- Test Suite 6: Live API Integration (Synthetic Case SAKSHI-CASE-2026-C5A64E99) --");
 
-  const testCaseId = "SAKSHI-TEST-2026-002";
-  const expectedEvidenceId = "SAKSHI-EVID-2026-E51D496A";
+  const testCaseId = "SAKSHI-CASE-2026-C5A64E99";
+  const expectedEvidenceId = "SAKSHI-EVID-2026-43F94E97";
   const authHeaders = {
     "Content-Type": "application/json",
     "X-Investigator-Id": "dev-investigator-001",

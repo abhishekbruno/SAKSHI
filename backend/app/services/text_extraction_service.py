@@ -228,7 +228,7 @@ class TextExtractionService:
 
         is_pdf = (
             effective_mime == "application/pdf"
-            or evidence.evidence_category == "DOCUMENT_PDF"
+            or evidence.evidence_category in ("DOCUMENT_PDF", "DOCUMENT", "MEDICAL_REPORT")
             or evidence.original_file_name.lower().endswith(".pdf")
         )
 

@@ -13,11 +13,13 @@ class EvidenceCategory(str, Enum):
     """Forensic evidence classification categories."""
     DOCUMENT_PDF = "DOCUMENT_PDF"
     DOCUMENT = "DOCUMENT_PDF"
+    MEDICAL_REPORT = "MEDICAL_REPORT"
     SCENE_PHOTO = "SCENE_PHOTO"
     AUTOPSY_PHOTO = "AUTOPSY_PHOTO"
     AUDIO_RECORDING = "AUDIO_RECORDING"
     CDR_SPREADSHEET = "CDR_SPREADSHEET"
     DIGITAL_DEVICE_EXTRACTION = "DIGITAL_DEVICE_EXTRACTION"
+    PHYSICAL_EXHIBIT = "PHYSICAL_EXHIBIT"
     OTHER = "OTHER"
 
 
@@ -606,6 +608,38 @@ class FactAttributionType(str, Enum):
     NEEDS_CONFIRMATION = "NEEDS_CONFIRMATION"
 
 
+class FactReviewDecision(str, Enum):
+    """Investigator review decision on an extracted fact."""
+    CONFIRMED = "CONFIRMED"
+    CORRECTED = "CORRECTED"
+    FLAGGED = "FLAGGED"
+    REJECTED = "REJECTED"
+
+
+class FactReviewRequest(BaseModel):
+    """Investigator submission to confirm, correct, or dispute an extracted forensic claim."""
+    decision: FactReviewDecision = Field(..., description="Review outcome: CONFIRMED, CORRECTED, FLAGGED, REJECTED")
+    corrected_text: Optional[str] = Field(None, description="Investigator-corrected fact statement if amending")
+    reason: str = Field(..., min_length=3, max_length=1000, description="Mandatory forensic rationale for the decision")
+    notes: Optional[str] = Field(None, max_length=1000, description="Additional investigator notes")
+
+
+class FactReviewResponse(BaseModel):
+    """Audited outcome of an investigator fact review decision."""
+    case_id: str
+    evidence_id: str
+    fact_id: str
+    review_status: str
+    decision: str
+    previous_text: Optional[str] = None
+    current_text: str
+    reason: str
+    reviewed_by: str
+    reviewed_at: datetime
+    message: str
+    audit_recorded: bool = True
+
+
 class ExtractedFactItem(BaseModel):
     """Individual extracted forensic fact with provenance and attribution metadata."""
     fact_id: str
@@ -621,6 +655,35 @@ class ExtractedFactItem(BaseModel):
     char_offset_end: Optional[int] = None
     source_passage: Optional[str] = None
     verified_by_investigator: bool = False
+    why_it_matters: Optional[str] = Field(None, description="Investigative relevance and why this fact matters")
+    review_status: str = Field("AWAITING_REVIEW", description="Epistemic status: DIRECTLY_STATED, AWAITING_REVIEW, HUMAN_REVIEWED, CORROBORATED, CONFLICTING, UNVERIFIED, SUPERSEDED, UNKNOWN")
+    reviewer_notes: Optional[str] = None
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    extraction_method: str = Field("DIGITAL_PARSED", description="DIGITAL_PARSED or OCR_DERIVED")
+    is_ocr: bool = False
+    revision_history: List[Dict[str, Any]] = Field(default_factory=list)
+
+
+class ImportantDetailItem(BaseModel):
+    """A grouped, structured, evidence-grounded detail for investigator review."""
+    detail_id: str
+    category: str  # PEOPLE_IDENTIFIERS | DATES_TIMES | LOCATIONS | EVENTS_ACTIONS | OBJECTS_EXHIBITS | OTHER
+    field_label: str  # e.g. "Premises & Room Location", "Guest / Subject Person", "Check-in Timestamp"
+    display_value: str  # Formatted, grouped value e.g. "Room 204, Riverside Guesthouse, 14 Sample Quay, Example District"
+    is_grouped: bool = False
+    is_normalized: bool = False
+    normalization_note: Optional[str] = None
+    source_reference: Optional[str] = None  # e.g. "p. 1 [345-501]"
+    source_passage: Optional[str] = None  # Verbatim source excerpt
+    supporting_fact_ids: List[str] = Field(default_factory=list)
+    review_status: str = "AWAITING_REVIEW"
+    page_number: Optional[int] = 1
+    char_offset_start: Optional[int] = None
+    char_offset_end: Optional[int] = None
+    attribution_type: str = "EXTRACTED_BY_SOFTWARE"
+    is_ambiguous: bool = False
+    ambiguity_note: Optional[str] = None
 
 
 class EvidenceExtractedFactsResponse(BaseModel):
@@ -631,12 +694,22 @@ class EvidenceExtractedFactsResponse(BaseModel):
     is_supported: bool
     detected_format: Optional[str] = None
     indexing_status: str
+    document_type: Optional[str] = Field(None, description="Classified document type (e.g. First Information Report (FIR))")
     document_summary: Optional[str] = None
     summary_label: str = "AI-Generated Summary — Grounded in Document Text (Requires Investigator Corroboration)"
+    processing_status_label: Optional[str] = Field(None, description="Human-readable processing status label")
+    source_coverage: Optional[str] = Field(None, description="Source coverage indicator e.g. '100% of parsed text chunks'")
+    last_updated: Optional[datetime] = None
     total_facts: int = Field(0, description="Total count of extracted facts")
     facts: List[ExtractedFactItem] = Field(default_factory=list)
+    important_details: List[ImportantDetailItem] = Field(default_factory=list, description="Structured and grouped details for compact review")
     important_passages: List[str] = Field(default_factory=list)
+    important_source_passages: List[Dict[str, Any]] = Field(default_factory=list)
     uncertainties: List[str] = Field(default_factory=list)
+    important_unknowns: List[str] = Field(default_factory=list)
+    document_unknowns: List[str] = Field(default_factory=list, description="Genuine gaps and limitations within the document's own scope")
+    case_level_unknowns: List[str] = Field(default_factory=list, description="Broader case-level investigative follow-ups and statutory requisitions")
+    epistemic_breakdown: Optional[Dict[str, int]] = Field(default_factory=dict)
     message: Optional[str] = None
 
 

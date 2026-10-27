@@ -114,7 +114,9 @@ screens.forEach(s => {
   const screenIdx = js.indexOf(`const ${s.name} =`);
   assert(screenIdx !== -1, `${s.name} component exists`);
   if (screenIdx !== -1) {
-    const screenCode = js.substring(screenIdx, screenIdx + 800);
+    // Components may define small pure helpers before render(); inspect the
+    // complete component window rather than assuming render starts immediately.
+    const screenCode = js.substring(screenIdx, screenIdx + 5000);
     const hasTryCatch = screenCode.includes('try') && screenCode.includes('ensureActiveCaseLoaded') && screenCode.includes('renderCaseNotFound');
     assert(hasTryCatch, `${s.name} wraps ensureActiveCaseLoaded in try/catch and calls renderCaseNotFound`);
   }

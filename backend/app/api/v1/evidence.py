@@ -35,7 +35,18 @@ from app.services.encryption_service import EncryptionService
 from app.services.rag_indexing_service import RAGIndexingService
 from app.services.evidence_extraction_service import EvidenceExtractionService
 from app.schemas.rag import RAGDocumentSummary
+import os
+from fastapi.responses import FileResponse
+from app.repositories.case_repository import CaseRepository
+from app.repositories.evidence_repository import EvidenceRepository
 from app.repositories.rag_repository import RAGRepository
+from app.services.auth_service import authorization_service
+from app.core.errors import (
+    InvalidEvidenceDataException,
+    CaseNotFoundException,
+    EvidenceNotFoundException,
+    EvidenceFileNotFoundException,
+)
 from app.schemas.evidence import (
     EvidenceCategory,
     EvidenceIntakeMetadata,
@@ -58,6 +69,8 @@ from app.schemas.evidence import (
     PipelineExecutionResult,
     PipelineExecutionStatus,
     EvidenceExtractedFactsResponse,
+    FactReviewRequest,
+    FactReviewResponse,
 )
 
 router = APIRouter(prefix="/cases/{case_id}/evidence", tags=["Evidence Ingestion (MOD-05)"])
@@ -725,5 +738,92 @@ def trigger_evidence_extracted_facts(
         investigator=investigator,
         force_reindex=force_reindex,
     )
+
+
+@router.get(
+    "/{evidence_id}/file",
+    summary="View or download original preserved evidence file",
+)
+def get_evidence_file(
+    case_id: str,
+    evidence_id: str,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    db: Session = Depends(get_db),
+):
+    """
+    Retrieves the authentic, unmodified original evidence file.
+    Strictly case-scoped and authorization-checked.
+    Never overwrites or modifies evidence; serves with immutable headers.
+    """
+    case_repo = CaseRepository(db)
+    case = case_repo.get_by_case_id(case_id)
+    if not case:
+        raise CaseNotFoundException(case_id)
+
+    authorization_service.check_can_read_evidence(investigator, case)
+
+    evidence_repo = EvidenceRepository(db)
+    evidence = evidence_repo.get_by_evidence_id(evidence_id)
+    if not evidence or evidence.case_id != case_id:
+        raise EvidenceNotFoundException(evidence_id)
+
+    # Resolve physical file path
+    file_path = evidence.raw_storage_path
+    if not file_path or not os.path.exists(file_path):
+        # Check WORM reference
+        if evidence.worm_storage_reference and evidence.worm_storage_reference.startswith("worm://"):
+            parts = evidence.worm_storage_reference[7:].split("/")
+            if len(parts) == 2:
+                digest = parts[1]
+                worm_dir = os.path.join(case.case_workspace_path, "evidence", "worm")
+                alt_path = os.path.join(worm_dir, digest.lower())
+                if os.path.exists(alt_path):
+                    file_path = alt_path
+
+    if not file_path or not os.path.exists(file_path):
+        raise EvidenceFileNotFoundException(f"Original file for exhibit '{evidence_id}' was not found on storage disk.")
+
+    media_type = evidence.detected_mime_type or evidence.declared_mime_type or "application/octet-stream"
+    filename = evidence.original_file_name or f"evidence_{evidence_id}.bin"
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type="inline",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-cache, no-store, must-revalidate",
+            "X-Evidence-ID": evidence_id,
+            "X-Case-ID": case_id,
+        }
+    )
+
+
+@router.post(
+    "/{evidence_id}/facts/{fact_id}/decision",
+    response_model=FactReviewResponse,
+    summary="Record investigator review decision (Confirm, Correct, Flag, Reject) on extracted fact",
+)
+def record_evidence_fact_decision(
+    case_id: str,
+    evidence_id: str,
+    fact_id: str,
+    payload: FactReviewRequest,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    extraction_service: EvidenceExtractionService = Depends(get_evidence_extraction_service),
+) -> FactReviewResponse:
+    """
+    Records an authoritative investigator review decision on an extracted forensic claim.
+    Requires justification reason; logs immutable audit event with revision history.
+    """
+    return extraction_service.record_fact_decision(
+        case_id=case_id,
+        evidence_id=evidence_id,
+        fact_id=fact_id,
+        request=payload,
+        investigator=investigator,
+    )
+
 
 

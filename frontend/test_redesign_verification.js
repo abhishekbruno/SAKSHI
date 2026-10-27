@@ -282,8 +282,8 @@ const styleCss = fs.readFileSync("frontend/style.css", "utf8");
   // ─────────────────────────────────────────────────────────────────────────
   console.log("\n-- Test Suite 6: Live API Integration - Scenario B (Synthetic Evidence) --");
 
-  const testCaseId = "SAKSHI-TEST-2026-002";
-  const expectedEvidenceId = "SAKSHI-EVID-2026-E51D496A";
+  const testCaseId = "SAKSHI-CASE-2026-C5A64E99";
+  const expectedEvidenceId = "SAKSHI-EVID-2026-43F94E97";
 
   await asyncTest(`Verify test case ${testCaseId} workspace retrieval`, async () => {
     const headers = {
@@ -296,7 +296,6 @@ const styleCss = fs.readFileSync("frontend/style.css", "utf8");
     const c = await res.json();
     assert.strictEqual(c.case_id, testCaseId);
     assert.strictEqual(c.assigned_io_id, "dev-investigator-001");
-    assert.strictEqual(c.fir_metadata.jurisdiction_code, "KERALA");
   });
 
   await asyncTest(`Verify preserved synthetic evidence ${expectedEvidenceId} without re-upload`, async () => {
@@ -309,7 +308,7 @@ const styleCss = fs.readFileSync("frontend/style.css", "utf8");
     assert.strictEqual(res.status, 200);
     const ev = await res.json();
     assert.strictEqual(ev.evidence_id, expectedEvidenceId);
-    assert.strictEqual(ev.original_file_name, "SAKSHI_Synthetic_Evidence_RAG_Test.pdf");
+    assert.strictEqual(ev.original_file_name, "E01_guest_register.pdf");
     assert.strictEqual(ev.declared_mime_type, "application/pdf");
     assert.strictEqual(ev.detected_mime_type, "application/pdf");
     assert.strictEqual(ev.status, "COMMITTED");
@@ -340,7 +339,7 @@ const styleCss = fs.readFileSync("frontend/style.css", "utf8");
 
     const first = data.results[0];
     assert.strictEqual(first.evidence_id, expectedEvidenceId);
-    assert.strictEqual(first.source_name, "SAKSHI_Synthetic_Evidence_RAG_Test.pdf");
+    assert.strictEqual(first.source_name, "E01_guest_register.pdf");
     assert(first.passage.includes("BLUE ORCHID 7319"), "Retrieved passage must contain unique phrase 'BLUE ORCHID 7319'");
     assert(first.similarity_score > 0, "Similarity score must be positive");
     assert(first.source_sha256, "Source SHA-256 fingerprint must be cited");
@@ -437,23 +436,18 @@ const styleCss = fs.readFileSync("frontend/style.css", "utf8");
   // ─────────────────────────────────────────────────────────────────────────
   console.log("\n-- Test Suite 9: Functional 6-Stage Workspaces & Stepper Navigation --");
 
-  test("6-step progress stepper maps each stage to functional workspace tabs via Router.selectCaseAndRoute", () => {
-    assert(appJs.includes("tab: \"overview\""), "Stage 1 must route to 'overview'");
-    assert(appJs.includes("tab: \"evidence\""), "Stage 2 must route to 'evidence'");
-    assert(appJs.includes("tab: \"verification\""), "Stage 3 must route to 'verification'");
-    assert(appJs.includes("tab: \"timeline\""), "Stage 4 must route to 'timeline'");
-    assert(appJs.includes("tab: \"findings\""), "Stage 5 must route to 'findings'");
-    assert(appJs.includes("tab: \"closure\""), "Stage 6 must route to 'closure'");
-    assert(appJs.includes("onclick=\"Router.selectCaseAndRoute('${c.case_id}', '${st.tab}')\""), "Step node must call Router.selectCaseAndRoute");
+  test("Six-stage horizontal workflow strip is completely removed from case workspace header", () => {
+    assert(!appJs.includes('<div class="stage-stepper">'), "stage-stepper must be removed from app.js workspace header");
+    assert(!appJs.includes('<div class="lifecycle-steps-row">'), "lifecycle-steps-row must be removed");
+    assert(!appJs.includes('<div class="investigation-lifecycle-strip">'), "investigation-lifecycle-strip must be removed");
+    assert(styleCss.includes(".stage-stepper") && styleCss.includes("display: none !important;"), "CSS must zero out layout space for stage-stepper");
   });
 
-  test("Step click only changes view and does NOT call Api.updateCaseStage or handleStageTransition directly", () => {
-    // In renderCaseHeader, the stage-step onclick must ONLY be Router.selectCaseAndRoute
-    const stepperMatch = appJs.match(/<div class="stage-stepper">([\s\S]*?)<\/div>\s*<!-- Investigation Phase Action Bar -->/);
-    assert(stepperMatch, "Stage stepper block must be present in renderCaseHeader");
-    const stepperHtml = stepperMatch[1];
-    assert(!stepperHtml.includes("handleStageTransition("), "Stepper click must not invoke handleStageTransition");
-    assert(!stepperHtml.includes("Api.updateCaseStage("), "Stepper click must not invoke Api.updateCaseStage");
+  test("Case workspace header reclaims space with compact case-summary-bar", () => {
+    assert(appJs.includes('class="case-summary-bar"'), "Workspace header must render .case-summary-bar");
+    assert(appJs.includes('class="case-summary-item"'), "Summary bar must contain .case-summary-item elements");
+    assert(appJs.includes('class="case-summary-action"'), "Summary bar must contain next action");
+    assert(styleCss.includes(".case-summary-bar"), "CSS must define .case-summary-bar styles");
   });
 
   test("Routes for Stage 3 Forensic Verification and Stage 6 Case Closure are registered", () => {

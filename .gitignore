@@ -48,5 +48,8 @@ node_modules/
 # UiPath Studio build caches & temporary files
 **/.local/
 **/.settings/
+
+# Local database backups
+backups/
 **/.tmh/
 *.dll

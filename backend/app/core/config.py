@@ -25,6 +25,18 @@ class Settings(BaseSettings):
         description="Database connection URL (PostgreSQL or SQLite)"
     )
 
+    # Dedicated test database URL for automated test runs (guarantees isolation)
+    TEST_DATABASE_URL: Optional[str] = Field(
+        default=None,
+        description="Dedicated test database URL for automated test runs. If specified, automated tests use this isolated target."
+    )
+
+    # Startup seed gate: prevents creating test cases in normal development unless explicitly enabled
+    ENABLE_STARTUP_SEED: bool = Field(
+        default=False,
+        description="Explicitly allow startup seed routines to create test cases in the database (default: False)"
+    )
+
     # Database engine and connection pool configuration (used when connected to PostgreSQL)
     DB_POOL_SIZE: int = Field(
         default=5,

@@ -117,6 +117,27 @@ ALLOWED_MIME_TYPES: Dict[str, Dict[str, Any]] = {
         "extensions": [".flac"],
         "equivalent_mimes": ["audio/flac", "audio/x-flac"],
     },
+    # Video
+    "video/mp4": {
+        "format": "MP4",
+        "extensions": [".mp4"],
+        "equivalent_mimes": ["video/mp4"],
+    },
+    "video/x-msvideo": {
+        "format": "AVI",
+        "extensions": [".avi"],
+        "equivalent_mimes": ["video/x-msvideo", "video/avi"],
+    },
+    "video/quicktime": {
+        "format": "MOV",
+        "extensions": [".mov"],
+        "equivalent_mimes": ["video/quicktime"],
+    },
+    "video/x-matroska": {
+        "format": "MKV",
+        "extensions": [".mkv"],
+        "equivalent_mimes": ["video/x-matroska"],
+    },
     # CDR Spreadsheets & Tabular Text
     "text/csv": {
         "format": "CSV",
@@ -173,6 +194,38 @@ DANGEROUS_SIGNATURES: List[Tuple[bytes, str]] = [
     (b"#!/usr/bin/", "Unix Executable Script"),
     (b"<?php", "PHP Server Script"),
 ]
+
+# Evidence Category to Permitted MIME Types mapping
+CATEGORY_ALLOWED_MIMES: Dict[str, List[str]] = {
+    "DOCUMENT_PDF": ["application/pdf", "text/plain"],
+    "DOCUMENT": ["application/pdf", "text/plain"],
+    "MEDICAL_REPORT": ["application/pdf", "text/plain"],
+    "SCENE_PHOTO": ["image/jpeg", "image/png", "image/tiff", "image/webp"],
+    "AUTOPSY_PHOTO": ["image/jpeg", "image/png", "image/tiff", "image/webp"],
+    "AUDIO_RECORDING": ["audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3", "audio/ogg", "audio/flac"],
+    "CDR_SPREADSHEET": [
+        "text/csv",
+        "text/plain",
+        "application/vnd.ms-excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ],
+    "DIGITAL_DEVICE_EXTRACTION": [
+        "application/zip",
+        "application/gzip",
+        "application/json",
+        "text/plain",
+        "text/csv",
+    ],
+    "PHYSICAL_EXHIBIT": [
+        "application/pdf",
+        "image/jpeg",
+        "image/png",
+        "image/tiff",
+        "text/plain",
+        "application/json",
+    ],
+    "OTHER": list(set([m.lower() for m in ALLOWED_MIME_TYPES.keys()] + [eq.lower() for cfg in ALLOWED_MIME_TYPES.values() for eq in cfg.get("equivalent_mimes", [])])),
+}
 
 
 class MimeValidationService:
@@ -423,6 +476,26 @@ class MimeValidationService:
                 declared_extension=original_ext,
                 reason=reason,
             )
+
+        # 10.5. Evidence Category Consistency Check
+        category = (evidence.evidence_category or "").strip()
+        if category in CATEGORY_ALLOWED_MIMES:
+            allowed_for_cat = CATEGORY_ALLOWED_MIMES[category]
+            if detected_mime.lower() not in allowed_for_cat:
+                reason = (
+                    f"Evidence category mismatch: Category '{category}' requires a supported format "
+                    f"({', '.join(allowed_for_cat)}), but detected file type is '{detected_mime}' ({detected_format})."
+                )
+                return self._record_and_persist_decision(
+                    evidence=evidence,
+                    case=case,
+                    investigator=investigator,
+                    valid=False,
+                    detected_mime=detected_mime,
+                    detected_format=detected_format,
+                    declared_extension=original_ext,
+                    reason=reason,
+                )
 
         # 11. PASS: Valid MIME and binary signature match
         reason = f"Binary signature matches declared MIME '{declared_mime}' ({detected_format})."

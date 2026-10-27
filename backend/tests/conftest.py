@@ -14,14 +14,23 @@ from app.db.session import get_db
 from app.main import app
 from app.core.security import AuthenticatedInvestigator
 
-# Isolated in-memory SQLite for testing
-TEST_DATABASE_URL = "sqlite:///:memory:"
+from app.core.config import settings
 
-test_engine = create_engine(
-    TEST_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool
-)
+# Dedicated test database: uses settings.TEST_DATABASE_URL or an isolated in-memory SQLite database
+TEST_DATABASE_URL = settings.TEST_DATABASE_URL or "sqlite:///:memory:"
+
+connect_args = {"check_same_thread": False} if TEST_DATABASE_URL.startswith("sqlite") else {}
+if TEST_DATABASE_URL.startswith("sqlite"):
+    test_engine = create_engine(
+        TEST_DATABASE_URL,
+        connect_args=connect_args,
+        poolclass=StaticPool
+    )
+else:
+    test_engine = create_engine(
+        TEST_DATABASE_URL,
+        connect_args=connect_args
+    )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
 
