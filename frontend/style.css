@@ -660,6 +660,11 @@ html, body {
   box-shadow: 0 0 0 2px var(--primary-bg);
 }
 
+.form-input.input-error, .input-error {
+  border-color: #ef4444 !important;
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25) !important;
+}
+
 .form-helper {
   font-size: 0.72rem;
   color: var(--text-muted);

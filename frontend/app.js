@@ -1735,7 +1735,17 @@ function toggleLifecycleDetails() {
 
 
 const UI = {
+  _lastToastMessage: null,
+  _lastToastTime: 0,
+
   showToast(message, type = "info", duration = 4000) {
+    const now = Date.now();
+    if (this._lastToastMessage === message && (now - this._lastToastTime) < 2500) {
+      return; // Deduplicate identical toasts within 2.5 seconds
+    }
+    this._lastToastMessage = message;
+    this._lastToastTime = now;
+
     const container = document.getElementById("toastContainer");
     if (!container) return;
     const toast = document.createElement("div");
@@ -2629,7 +2639,7 @@ const ScreenCases = {
       tabF?.classList.add("active");
       if (secM) secM.style.display = "none";
       if (secF) secF.style.display = "block";
-      if (submitBtn) submitBtn.textContent = ScreenCases._extractedFirData ? "Confirm & Register Case" : "Initialize Case Inquiry";
+      if (submitBtn) submitBtn.textContent = ScreenCases._extractedFirData ? "Confirm & Register Case" : "Extract & Review FIR";
     } else {
       tabF?.classList.remove("active");
       tabM?.classList.add("active");
@@ -2672,10 +2682,25 @@ const ScreenCases = {
 
       const extracted = await Api.previewFIRExtraction(formData);
       ScreenCases._extractedFirData = extracted;
+      ScreenCases._reviewerModifications = {};
 
       if (previewMount) {
         previewMount.style.display = "block";
-        const initialTitle = extracted.suggested_title || `Inquest Inquiry of ${extracted.victim_name || 'Unnatural Death'} — ${extracted.fir_number}`;
+        const initialTitle = extracted.suggested_title || `Inquest Inquiry of ${extracted.victim_name || 'Unnatural Death'} — ${extracted.fir_number || 'Initial'}`;
+        
+        const friendlyFieldNames = {
+          fir_number: "FIR / Inquest Number",
+          police_station: "Police Station / Jurisdiction",
+          incident_date: "Incident Date / Occurrence Time",
+          report_date: "Report Date",
+          discovery_time: "Discovery Date / Time",
+          incident_location: "Scene of Occurrence / Location",
+          victim_name: "Deceased / Person Found Unresponsive",
+          complainant_name: "Complainant / Informant",
+          offense_sections: "Statutory Penal Sections",
+          investigating_officer: "Investigating Officer"
+        };
+
         previewMount.innerHTML = `
           <div class="card" style="padding: 16px; background: var(--bg-card-subtle); border-left: 4px solid var(--primary); margin-top: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -2695,14 +2720,14 @@ const ScreenCases = {
             ${(extracted.missing_fields && extracted.missing_fields.length > 0) ? `
               <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 0.74rem;">
                 <span style="color: var(--text-muted); font-weight: 600;">Unrecorded in source:</span>
-                ${extracted.missing_fields.map(f => `<span class="badge badge-attention" style="font-size: 0.7rem;">${Formatters.escapeHtml(f)}</span>`).join("")}
+                ${extracted.missing_fields.map(f => `<span class="badge badge-attention" style="font-size: 0.7rem;">${Formatters.escapeHtml(friendlyFieldNames[f] || f)}</span>`).join("")}
               </div>
             ` : ''}
 
             ${(extracted.ambiguous_fields && extracted.ambiguous_fields.length > 0) ? `
               <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; font-size: 0.74rem;">
                 <span style="color: var(--text-muted); font-weight: 600;">Approximate / Ambiguous:</span>
-                ${extracted.ambiguous_fields.map(f => `<span class="badge badge-warning" style="font-size: 0.7rem;">${Formatters.escapeHtml(f)}</span>`).join("")}
+                ${extracted.ambiguous_fields.map(f => `<span class="badge badge-warning" style="font-size: 0.7rem;">${Formatters.escapeHtml(friendlyFieldNames[f] || f)}</span>`).join("")}
               </div>
             ` : ''}
 
@@ -2714,39 +2739,66 @@ const ScreenCases = {
             <div class="grid-2">
               <div class="form-group">
                 <label class="form-label">FIR / Inquest Number *</label>
-                <input type="text" id="inpFirCandidateNumber" class="form-input" value="${Formatters.escapeHtml(extracted.fir_number)}" />
+                <input type="text" id="inpFirCandidateNumber" class="form-input" value="${Formatters.escapeHtml(extracted.fir_number || '')}" placeholder="e.g. FIR-SYN-2026-1042" />
               </div>
               <div class="form-group">
                 <label class="form-label">Police Station / Circle *</label>
-                <input type="text" id="inpFirCandidateStation" class="form-input" value="${Formatters.escapeHtml(extracted.police_station)}" />
+                <input type="text" id="inpFirCandidateStation" class="form-input" value="${Formatters.escapeHtml(extracted.police_station || '')}" placeholder="Originating Police Station" />
               </div>
             </div>
 
             <div class="grid-2">
               <div class="form-group">
-                <label class="form-label">Incident Date / Time</label>
-                <input type="text" id="inpFirCandidateDate" class="form-input" value="${Formatters.escapeHtml(extracted.incident_date || '')}" />
+                <label class="form-label">Report Date</label>
+                <input type="text" id="inpFirCandidateReportDate" class="form-input" value="${Formatters.escapeHtml(extracted.report_date || '')}" placeholder="Registration / Report Date" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">Discovery Date / Time</label>
+                <input type="text" id="inpFirCandidateDiscoveryTime" class="form-input" value="${Formatters.escapeHtml(extracted.discovery_time || '')}" placeholder="e.g. Approximately 07:20 IST on 18 October 2026" />
+              </div>
+            </div>
+
+            <div class="grid-2">
+              <div class="form-group">
+                <label class="form-label">Incident Date / Occurrence Time</label>
+                <input type="text" id="inpFirCandidateDate" class="form-input" value="${Formatters.escapeHtml(extracted.incident_date || '')}" placeholder="Occurrence timeframe" />
               </div>
               <div class="form-group">
                 <label class="form-label">Scene of Occurrence / Location</label>
-                <input type="text" id="inpFirCandidateLocation" class="form-input" value="${Formatters.escapeHtml(extracted.incident_location || '')}" />
+                <input type="text" id="inpFirCandidateLocation" class="form-input" value="${Formatters.escapeHtml(extracted.incident_location || '')}" placeholder="Scene / Discovery Location" />
               </div>
             </div>
 
             <div class="grid-2">
               <div class="form-group">
-                <label class="form-label">Complainant / Informant</label>
-                <input type="text" id="inpFirCandidateComplainant" class="form-input" value="${Formatters.escapeHtml(extracted.complainant_name || '')}" />
+                <label class="form-label">Deceased / Person Found Unresponsive</label>
+                <input type="text" id="inpFirCandidateVictim" class="form-input" value="${Formatters.escapeHtml(extracted.victim_name || '')}" placeholder="Name of deceased / subject" />
               </div>
               <div class="form-group">
-                <label class="form-label">Deceased / Victim</label>
-                <input type="text" id="inpFirCandidateVictim" class="form-input" value="${Formatters.escapeHtml(extracted.victim_name || '')}" />
+                <label class="form-label">Complainant / Informant</label>
+                <input type="text" id="inpFirCandidateComplainant" class="form-input" value="${Formatters.escapeHtml(extracted.complainant_name || '')}" placeholder="Not specified in source (optional)" />
               </div>
             </div>
 
             <div class="form-group">
               <label class="form-label">Reported Statutory Sections</label>
-              <input type="text" id="inpFirCandidateSections" class="form-input" value="${Formatters.escapeHtml(extracted.offense_sections || 'Section 194 BNSS')}" />
+              <input type="text" id="inpFirCandidateSections" class="form-input" value="${Formatters.escapeHtml(extracted.offense_sections || '')}" placeholder="Not specified in source (optional)" />
+            </div>
+
+            ${(extracted.witness_sightings && extracted.witness_sightings.length > 0) ? `
+              <div style="margin-top: 10px; padding: 10px 12px; background: var(--bg-surface); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
+                <div style="font-weight: 700; font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Witness Sightings (${extracted.witness_sightings.length})</div>
+                <div style="display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem;">
+                  ${extracted.witness_sightings.map(w => `
+                    <div><strong>${Formatters.escapeHtml(w.witness || 'Witness')}:</strong> <span class="badge badge-neutral" style="font-size:0.75rem;">${Formatters.escapeHtml(w.sighting || '')}</span></div>
+                  `).join("")}
+                </div>
+              </div>
+            ` : ''}
+
+            <div style="margin-top: 10px; padding: 10px 12px; background: rgba(59, 130, 246, 0.05); border-radius: var(--radius-sm); border: 1px solid rgba(59, 130, 246, 0.2); font-size: 0.78rem; color: var(--text-muted);">
+              <div><strong>Evidentiary Limitations:</strong> Time of death: <em>${Formatters.escapeHtml(extracted.time_of_death || 'Unknown / not established')}</em> | Cause of death: <em>${Formatters.escapeHtml(extracted.cause_of_death || 'Unknown / not established')}</em></div>
+              <div style="margin-top: 4px; font-size: 0.72rem; color: var(--text-muted);">Discovery time is preserved separately and not inferred as time of death. Motives, suspects, or penal offenses are not assumed without explicit source support.</div>
             </div>
 
             <!-- Verbatim Source Quotes Accordion -->
@@ -2757,7 +2809,8 @@ const ScreenCases = {
                   <div class="fir-source-quote-box" style="margin-top: 0; padding: 6px 10px;">
                     "${Formatters.escapeHtml(sp.quote)}"
                     <div class="fir-quote-meta">
-                      <span>Field: <strong>${Formatters.escapeHtml(sp.field)}</strong></span>
+                      <span>Field: <strong>${Formatters.escapeHtml(friendlyFieldNames[sp.field] || sp.field)}</strong></span>
+                      <span class="badge badge-${sp.extraction_status === 'EXTRACTED' ? 'success' : 'attention'}" style="font-size: 0.65rem;">${Formatters.escapeHtml(sp.extraction_status || 'EXTRACTED')}</span>
                       <span>Offset: ${sp.char_offset || 0}</span>
                     </div>
                   </div>
@@ -2766,6 +2819,15 @@ const ScreenCases = {
             </div>
           </div>
         `;
+
+        // Attach live input listeners to track reviewer modifications and clear validation error states
+        previewMount.querySelectorAll("input").forEach(inp => {
+          inp.addEventListener("input", () => {
+            inp.classList.remove("input-error");
+            if (!ScreenCases._reviewerModifications) ScreenCases._reviewerModifications = {};
+            ScreenCases._reviewerModifications[inp.id] = inp.value;
+          });
+        });
       }
 
       const submitBtn = document.getElementById("btnSubmitNewCase");
@@ -2782,67 +2844,133 @@ const ScreenCases = {
   },
 
   async submitFirAssistedCase() {
-    const title = document.getElementById("inpFirCandidateTitle")?.value.trim();
-    const firNum = document.getElementById("inpFirCandidateNumber")?.value.trim();
-    const station = document.getElementById("inpFirCandidateStation")?.value.trim();
+    if (ScreenCases._isSubmittingFir) return;
+
+    // Check if extraction has occurred
+    if (!ScreenCases._extractedFirData) {
+      const file = ScreenCases._uploadedFirFile;
+      const pastedText = document.getElementById("inpFirPastedText")?.value.trim() || "";
+      if (file || pastedText) {
+        UI.showToast("Extracting candidate particulars from provided FIR...", "info");
+        await ScreenCases.extractFirDetails();
+        return;
+      } else {
+        UI.showToast("Please choose an FIR file or paste FIR text first, then extract particulars.", "error");
+        return;
+      }
+    }
+
+    const titleInput = document.getElementById("inpFirCandidateTitle");
+    const firNumInput = document.getElementById("inpFirCandidateNumber");
+    const stationInput = document.getElementById("inpFirCandidateStation");
+
+    [titleInput, firNumInput, stationInput].forEach(el => el?.classList.remove("input-error"));
+
+    const title = titleInput?.value.trim() || "";
+    const firNum = firNumInput?.value.trim() || "";
+    const station = stationInput?.value.trim() || "";
+
+    const missingList = [];
+    if (!title) { missingList.push("Title"); titleInput?.classList.add("input-error"); }
+    if (!firNum) { missingList.push("FIR Number"); firNumInput?.classList.add("input-error"); }
+    if (!station) { missingList.push("Police Station"); stationInput?.classList.add("input-error"); }
+
+    if (missingList.length > 0) {
+      const firstInvalid = !title ? titleInput : (!firNum ? firNumInput : stationInput);
+      firstInvalid?.focus();
+      UI.showToast(`Please confirm mandatory particulars (${missingList.join(", ")}).`, "error");
+      return;
+    }
+
     const dateStr = document.getElementById("inpFirCandidateDate")?.value.trim();
+    const reportDateStr = document.getElementById("inpFirCandidateReportDate")?.value.trim();
+    const discoveryTimeStr = document.getElementById("inpFirCandidateDiscoveryTime")?.value.trim();
     const loc = document.getElementById("inpFirCandidateLocation")?.value.trim();
     const comp = document.getElementById("inpFirCandidateComplainant")?.value.trim();
     const vic = document.getElementById("inpFirCandidateVictim")?.value.trim();
     const sec = document.getElementById("inpFirCandidateSections")?.value.trim();
     const rawText = document.getElementById("inpFirPastedText")?.value || "";
 
-    if (!title || !firNum || !station) {
-      UI.showToast("Please confirm mandatory particulars (Title, FIR Number, Police Station).", "error");
-      return;
+    const submitBtn = document.getElementById("btnSubmitNewCase");
+    ScreenCases._isSubmittingFir = true;
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = `<span style="display:inline-block; width:12px; height:12px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin 0.75s linear infinite; margin-right:6px; vertical-align:middle;"></span> Initializing...`;
     }
-
-    let firB64 = null;
-    if (ScreenCases._uploadedFirFile) {
-      try {
-        firB64 = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const res = reader.result || "";
-            const b64 = typeof res === "string" && res.includes(",") ? res.split(",")[1] : res;
-            resolve(b64);
-          };
-          reader.onerror = () => resolve(null);
-          reader.readAsDataURL(ScreenCases._uploadedFirFile);
-        });
-      } catch (e) {
-        console.warn("Could not read uploaded FIR file as base64:", e);
-      }
-    }
-
-    const payload = {
-      title: title,
-      assigned_io_id: State.auth.subjectId,
-      fir_metadata: {
-        fir_number: firNum,
-        police_station: station,
-        incident_date: dateStr || new Date().toISOString(),
-        incident_location: loc || "Scene of occurrence unrecorded",
-        additional_attributes: {
-          complainant_name: comp,
-          victim_name: vic,
-          offense_sections: sec,
-          assisted_registration: true
-        }
-      },
-      fir_file_b64: firB64,
-      fir_raw_text: rawText,
-      fir_filename: ScreenCases._uploadedFirFile ? ScreenCases._uploadedFirFile.name : "FIR_initial_record.txt"
-    };
 
     try {
+      let firB64 = null;
+      if (ScreenCases._uploadedFirFile) {
+        try {
+          firB64 = await new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const res = reader.result || "";
+              const b64 = typeof res === "string" && res.includes(",") ? res.split(",")[1] : res;
+              resolve(b64);
+            };
+            reader.onerror = () => resolve(null);
+            reader.readAsDataURL(ScreenCases._uploadedFirFile);
+          });
+        } catch (e) {
+          console.warn("Could not read uploaded FIR file as base64:", e);
+        }
+      }
+
+      const payload = {
+        title: title,
+        assigned_io_id: State.auth.subjectId,
+        fir_metadata: {
+          fir_number: firNum,
+          police_station: station,
+          incident_date: dateStr || discoveryTimeStr || new Date().toISOString(),
+          report_date: reportDateStr || null,
+          incident_location: loc || "Scene of occurrence unrecorded",
+          victim_name: vic || null,
+          complainant_name: comp || null,
+          additional_attributes: {
+            discovery_time: discoveryTimeStr || null,
+            offense_sections: sec || null,
+            witness_sightings: ScreenCases._extractedFirData?.witness_sightings || [],
+            time_of_death: ScreenCases._extractedFirData?.time_of_death || "Unknown / not established",
+            cause_of_death: ScreenCases._extractedFirData?.cause_of_death || "Unknown / not established",
+            candidate_extractions: ScreenCases._extractedFirData,
+            reviewer_modifications: ScreenCases._reviewerModifications || {},
+            source_passages: ScreenCases._extractedFirData?.source_passages || [],
+            assisted_registration: true
+          }
+        },
+        discovery_time: discoveryTimeStr || null,
+        offense_sections: sec || null,
+        witness_sightings: ScreenCases._extractedFirData?.witness_sightings || [],
+        time_of_death: ScreenCases._extractedFirData?.time_of_death,
+        cause_of_death: ScreenCases._extractedFirData?.cause_of_death,
+        candidate_extractions: ScreenCases._extractedFirData,
+        reviewer_modifications: ScreenCases._reviewerModifications || {},
+        source_passages: ScreenCases._extractedFirData?.source_passages || [],
+        fir_file_b64: firB64,
+        fir_raw_text: rawText,
+        fir_filename: ScreenCases._uploadedFirFile ? ScreenCases._uploadedFirFile.name : "FIR_initial_record.txt"
+      };
+
       const resp = await Api.createCaseFIRAssisted(payload);
       UI.closeModal();
       UI.recordAudit("CASE_INITIALIZED_FIR_ASSISTED", resp.case.case_id, "SUCCESS", `Case registered via FIR assistance: ${resp.case.title}`);
       UI.showToast(`Case ${resp.case.case_id} registered and FIR preserved into chain of custody!`, "success");
+
+      // Reload case directory to show registered case
+      if (typeof ScreenCases.loadCases === "function") {
+        await ScreenCases.loadCases();
+      }
       ScreenCases.showRegistrationSuccessModal(resp.case);
     } catch (err) {
       UI.showToast(`FIR-Assisted registration failed: ${err.message}`, "error");
+    } finally {
+      ScreenCases._isSubmittingFir = false;
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Confirm & Register Case";
+      }
     }
   },
 

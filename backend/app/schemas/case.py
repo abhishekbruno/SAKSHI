@@ -130,6 +130,8 @@ class FIRSourcePassage(BaseModel):
     char_offset: Optional[int] = Field(None, description="Starting character offset in source text")
     start_char: Optional[int] = Field(None, description="Exact start character index")
     end_char: Optional[int] = Field(None, description="Exact end character index")
+    extraction_status: Optional[str] = Field("EXTRACTED", description="Extraction state: EXTRACTED, NEEDS_REVIEW, or NOT_FOUND")
+    extracted_value: Optional[str] = Field(None, description="Extracted candidate value")
 
 
 class FIRAssistedExtractResponse(BaseModel):
@@ -137,15 +139,19 @@ class FIRAssistedExtractResponse(BaseModel):
     Extracted candidate metadata from an FIR document.
     Presented for human investigator review and correction before authoritative case creation.
     """
-    fir_number: str = Field(..., description="Extracted FIR number")
-    police_station: str = Field(..., description="Extracted police station or jurisdiction")
+    fir_number: Optional[str] = Field(None, description="Extracted FIR number")
+    police_station: Optional[str] = Field(None, description="Extracted police station or jurisdiction")
     incident_date: Optional[str] = Field(None, description="Extracted date/time of occurrence")
     report_date: Optional[str] = Field(None, description="Extracted date of registration")
+    discovery_time: Optional[str] = Field(None, description="Extracted discovery date/time")
     incident_location: Optional[str] = Field(None, description="Extracted location")
     complainant_name: Optional[str] = Field(None, description="Extracted complainant or informant name")
-    victim_name: Optional[str] = Field(None, description="Extracted deceased or victim name")
+    victim_name: Optional[str] = Field(None, description="Extracted deceased or victim name / unresponsive person")
     offense_sections: Optional[str] = Field(None, description="Extracted statutory penal sections")
     reported_narrative: Optional[str] = Field(None, description="Concise candidate occurrence narrative")
+    witness_sightings: List[Dict[str, Any]] = Field(default_factory=list, description="Witness sightings extracted from FIR")
+    time_of_death: Optional[str] = Field("Unknown / not established", description="Time of death status")
+    cause_of_death: Optional[str] = Field("Unknown / not established", description="Cause of death status")
     source_passages: List[FIRSourcePassage] = Field(default_factory=list, description="Exact source quotes grounding extracted fields")
     suggested_title: Optional[str] = Field(None, description="Suggested neutral case title derived from FIR particulars")
     investigating_officer: Optional[str] = Field(None, description="Extracted investigating officer name if stated in FIR")
@@ -154,6 +160,7 @@ class FIRAssistedExtractResponse(BaseModel):
     is_ocr_applied: bool = Field(False, description="Whether optical character recognition was executed")
     ocr_limitation_notice: Optional[str] = Field(None, description="Honest disclosure if document contains scanned images without OCR")
     extraction_confidence: str = Field("CANDIDATE_EXTRACTION", description="Extraction certainty rating")
+    extraction_status: str = Field("EXTRACTED", description="Overall extraction status (EXTRACTED, NEEDS_REVIEW, NOT_FOUND)")
     disclaimer: str = Field(
         "Candidate extraction from submitted FIR document. "
         "All extracted fields require review and confirmation by the Investigating Officer prior to authoritative case registration.",
@@ -179,6 +186,14 @@ class FIRAssistedCaseCreateRequest(BaseModel):
     incident_date: Optional[str] = None
     incident_location: Optional[str] = None
     deceased_name: Optional[str] = None
+    discovery_time: Optional[str] = None
+    offense_sections: Optional[str] = None
+    witness_sightings: Optional[List[Dict[str, Any]]] = None
+    time_of_death: Optional[str] = None
+    cause_of_death: Optional[str] = None
+    candidate_extractions: Optional[Dict[str, Any]] = None
+    source_passages: Optional[List[Dict[str, Any]]] = None
+    reviewer_modifications: Optional[Dict[str, Any]] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -186,6 +201,21 @@ class FIRAssistedCaseCreateRequest(BaseModel):
         if isinstance(data, dict):
             if data.get("fir_text") and not data.get("fir_raw_text"):
                 data["fir_raw_text"] = data["fir_text"]
+            
+            # Additional attributes to preserve for review audit trail
+            extra_attrs = {
+                "discovery_time": data.get("discovery_time"),
+                "offense_sections": data.get("offense_sections"),
+                "witness_sightings": data.get("witness_sightings"),
+                "time_of_death": data.get("time_of_death"),
+                "cause_of_death": data.get("cause_of_death"),
+                "candidate_extractions": data.get("candidate_extractions"),
+                "source_passages": data.get("source_passages"),
+                "reviewer_modifications": data.get("reviewer_modifications"),
+                "assisted_registration": True,
+            }
+            extra_attrs = {k: v for k, v in extra_attrs.items() if v is not None}
+
             if not data.get("fir_metadata"):
                 fir_num = data.get("fir_number") or f"FIR-{secrets.token_hex(3).upper()}/2026"
                 ps = data.get("police_station") or "Connaught Place, New Delhi"
@@ -194,8 +224,18 @@ class FIRAssistedCaseCreateRequest(BaseModel):
                     "police_station": ps,
                     "incident_date": data.get("incident_date"),
                     "incident_location": data.get("incident_location"),
+                    "victim_name": data.get("deceased_name") or data.get("victim_name"),
                     "jurisdiction_code": data.get("jurisdiction_code") or "STATION_CENTRAL",
+                    "additional_attributes": extra_attrs,
                 }
+            elif isinstance(data.get("fir_metadata"), dict):
+                # Ensure existing additional_attributes are enriched with audit trail
+                meta = data["fir_metadata"]
+                existing_attrs = meta.get("additional_attributes") or {}
+                existing_attrs.update(extra_attrs)
+                meta["additional_attributes"] = existing_attrs
+                if data.get("deceased_name") and not meta.get("victim_name"):
+                    meta["victim_name"] = data["deceased_name"]
         return data
 
 
