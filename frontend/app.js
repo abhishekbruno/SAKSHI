@@ -2605,7 +2605,7 @@ const ScreenCases = {
 
         <div class="form-group">
           <label class="form-label">Or Paste FIR / Inquest Text Content</label>
-          <textarea id="inpFirPastedText" class="form-input" rows="4" placeholder="Paste First Information Report text or initial inquest notes here..."></textarea>
+          <textarea id="inpFirPastedText" class="form-input" rows="4" placeholder="Paste First Information Report text or initial inquest notes here..." oninput="ScreenCases.handleFirTextInput()"></textarea>
         </div>
 
         <div style="margin-bottom: 14px;">
@@ -2635,6 +2635,7 @@ const ScreenCases = {
     });
     ScreenCases._modalMode = "manual";
     ScreenCases._extractedFirData = null;
+    ScreenCases._reviewerModifications = {};
     ScreenCases._uploadedFirFile = null;
   },
 
@@ -2661,9 +2662,34 @@ const ScreenCases = {
     }
   },
 
+  handleFirTextInput() {
+    ScreenCases._extractedFirData = null;
+    ScreenCases._reviewerModifications = {};
+    const previewMount = document.getElementById("firExtractionPreviewContainer");
+    if (previewMount) {
+      previewMount.innerHTML = "";
+      previewMount.style.display = "none";
+    }
+    const submitBtn = document.getElementById("btnSubmitNewCase");
+    if (submitBtn && ScreenCases._modalMode === "fir") {
+      submitBtn.textContent = "Extract & Review FIR";
+    }
+  },
+
   handleFirFileSelect(input) {
     if (input.files && input.files[0]) {
       ScreenCases._uploadedFirFile = input.files[0];
+      ScreenCases._extractedFirData = null;
+      ScreenCases._reviewerModifications = {};
+      const previewMount = document.getElementById("firExtractionPreviewContainer");
+      if (previewMount) {
+        previewMount.innerHTML = "";
+        previewMount.style.display = "none";
+      }
+      const submitBtn = document.getElementById("btnSubmitNewCase");
+      if (submitBtn && ScreenCases._modalMode === "fir") {
+        submitBtn.textContent = "Extract & Review FIR";
+      }
     }
   },
 
@@ -2698,7 +2724,16 @@ const ScreenCases = {
 
       if (previewMount) {
         previewMount.style.display = "block";
-        const initialTitle = extracted.suggested_title || `Inquest Inquiry of ${extracted.victim_name || 'Unnatural Death'} — ${extracted.fir_number || 'Initial'}`;
+        const isPropLoss = extracted.incident_type === 'PROPERTY_LOSS';
+        const isDeath = extracted.incident_type === 'DEATH_INVESTIGATION';
+
+        const initialTitle = extracted.suggested_title || (
+          isPropLoss
+            ? `Property Loss Inquiry — ${extracted.fir_number || 'Initial'}`
+            : (isDeath
+                ? `Inquest Inquiry of ${extracted.victim_name || 'Unnatural Death'} — ${extracted.fir_number || 'Initial'}`
+                : `Incident Inquiry — ${extracted.fir_number || 'Initial'}`)
+        );
         
         const friendlyFieldNames = {
           fir_number: "FIR / Inquest Number",
@@ -2706,17 +2741,25 @@ const ScreenCases = {
           incident_date: "Incident Date / Occurrence Time",
           report_date: "Report Date",
           discovery_time: "Discovery Date / Time",
+          last_confirmed_present: "Last Confirmed Present",
           incident_location: "Scene of Occurrence / Location",
+          property_items: "Stolen Property / Items Involved",
           victim_name: "Deceased / Person Found Unresponsive",
           complainant_name: "Complainant / Informant",
           offense_sections: "Statutory Penal Sections",
           investigating_officer: "Investigating Officer"
         };
 
+        const incidentBadgeClass = isPropLoss ? "badge-info" : (isDeath ? "badge-warning" : "badge-attention");
+        const incidentBadgeLabel = isPropLoss ? "Incident Type: Property Loss / Theft" : (isDeath ? "Incident Type: Death Investigation" : "Incident Type: Needs Classification Review");
+
         previewMount.innerHTML = `
           <div class="card" style="padding: 16px; background: var(--bg-card-subtle); border-left: 4px solid var(--primary); margin-top: 14px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <h4 style="font-size: 0.96rem; font-weight: 700; color: var(--text-main);">Extracted Candidate Particulars</h4>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <h4 style="font-size: 0.96rem; font-weight: 700; color: var(--text-main); margin: 0;">Extracted Candidate Particulars</h4>
+                <span class="badge ${incidentBadgeClass}" style="font-size: 0.72rem;">${incidentBadgeLabel}</span>
+              </div>
               <span class="badge badge-attention">Human Review Required</span>
             </div>
             <p style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 14px;">
@@ -2744,7 +2787,7 @@ const ScreenCases = {
             ` : ''}
 
             <div class="form-group">
-              <label class="form-label">Suggested Case Title * <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">(Auto-generated, editable)</span></label>
+              <label class="form-label">Suggested Case Title * <span style="font-size: 0.75rem; color: var(--text-muted); font-weight: normal;">(Auto-generated from document, editable)</span></label>
               <input type="text" id="inpFirCandidateTitle" class="form-input" value="${Formatters.escapeHtml(initialTitle)}" />
             </div>
 
@@ -2766,38 +2809,68 @@ const ScreenCases = {
               </div>
               <div class="form-group">
                 <label class="form-label">Discovery Date / Time</label>
-                <input type="text" id="inpFirCandidateDiscoveryTime" class="form-input" value="${Formatters.escapeHtml(extracted.discovery_time || '')}" placeholder="e.g. Approximately 07:20 IST on 18 October 2026" />
+                <input type="text" id="inpFirCandidateDiscoveryTime" class="form-input" value="${Formatters.escapeHtml(extracted.discovery_time || '')}" placeholder="e.g. Approximately 08:15 IST on 22 October 2026" />
               </div>
             </div>
 
-            <div class="grid-2">
+            ${isPropLoss ? `
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label">Last Confirmed Present</label>
+                  <input type="text" id="inpFirCandidateLastPresent" class="form-input" value="${Formatters.escapeHtml(extracted.last_confirmed_present || '')}" placeholder="e.g. Approximately 18:00 IST on 21 October 2026" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Incident Date / Occurrence Time</label>
+                  <input type="text" id="inpFirCandidateDate" class="form-input" value="${Formatters.escapeHtml(extracted.incident_date || 'Unknown / not established')}" placeholder="Unknown / not established" />
+                </div>
+              </div>
+            ` : `
               <div class="form-group">
                 <label class="form-label">Incident Date / Occurrence Time</label>
                 <input type="text" id="inpFirCandidateDate" class="form-input" value="${Formatters.escapeHtml(extracted.incident_date || '')}" placeholder="Occurrence timeframe" />
               </div>
-              <div class="form-group">
-                <label class="form-label">Scene of Occurrence / Location</label>
-                <input type="text" id="inpFirCandidateLocation" class="form-input" value="${Formatters.escapeHtml(extracted.incident_location || '')}" placeholder="Scene / Discovery Location" />
-              </div>
+            `}
+
+            <div class="form-group">
+              <label class="form-label">Scene of Occurrence / Location</label>
+              <input type="text" id="inpFirCandidateLocation" class="form-input" style="width: 100%;" title="${Formatters.escapeHtml(extracted.incident_location || '')}" value="${Formatters.escapeHtml(extracted.incident_location || '')}" placeholder="Scene / Discovery Location" />
             </div>
 
-            <div class="grid-2">
-              <div class="form-group">
-                <label class="form-label">Deceased / Person Found Unresponsive</label>
-                <input type="text" id="inpFirCandidateVictim" class="form-input" value="${Formatters.escapeHtml(extracted.victim_name || '')}" placeholder="Name of deceased / subject" />
+            ${isPropLoss ? `
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label">Complainant / Informant</label>
+                  <input type="text" id="inpFirCandidateComplainant" class="form-input" value="${Formatters.escapeHtml(extracted.complainant_name || '')}" placeholder="Complainant name" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Stolen Property / Items Involved</label>
+                  <input type="text" id="inpFirCandidatePropertyItems" class="form-input" value="${Formatters.escapeHtml(extracted.property_items || '')}" placeholder="e.g. Audio sound mixing console and amplifiers" />
+                </div>
               </div>
+            ` : (isDeath ? `
+              <div class="grid-2">
+                <div class="form-group">
+                  <label class="form-label">Deceased / Person Found Unresponsive</label>
+                  <input type="text" id="inpFirCandidateVictim" class="form-input" value="${Formatters.escapeHtml(extracted.victim_name || '')}" placeholder="Name of deceased / subject" />
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Complainant / Informant</label>
+                  <input type="text" id="inpFirCandidateComplainant" class="form-input" value="${Formatters.escapeHtml(extracted.complainant_name || '')}" placeholder="Not specified in source (optional)" />
+                </div>
+              </div>
+            ` : `
               <div class="form-group">
                 <label class="form-label">Complainant / Informant</label>
-                <input type="text" id="inpFirCandidateComplainant" class="form-input" value="${Formatters.escapeHtml(extracted.complainant_name || '')}" placeholder="Not specified in source (optional)" />
+                <input type="text" id="inpFirCandidateComplainant" class="form-input" value="${Formatters.escapeHtml(extracted.complainant_name || '')}" placeholder="Complainant / Informant" />
               </div>
-            </div>
+            `)}
 
             <div class="form-group">
               <label class="form-label">Reported Statutory Sections</label>
               <input type="text" id="inpFirCandidateSections" class="form-input" value="${Formatters.escapeHtml(extracted.offense_sections || '')}" placeholder="Not specified in source (optional)" />
             </div>
 
-            ${(extracted.witness_sightings && extracted.witness_sightings.length > 0) ? `
+            ${(!isPropLoss && extracted.witness_sightings && extracted.witness_sightings.length > 0) ? `
               <div style="margin-top: 10px; padding: 10px 12px; background: var(--bg-surface); border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
                 <div style="font-weight: 700; font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Witness Sightings (${extracted.witness_sightings.length})</div>
                 <div style="display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem;">
@@ -2808,16 +2881,27 @@ const ScreenCases = {
               </div>
             ` : ''}
 
-            <div style="margin-top: 10px; padding: 10px 12px; background: rgba(59, 130, 246, 0.05); border-radius: var(--radius-sm); border: 1px solid rgba(59, 130, 246, 0.2); font-size: 0.78rem; color: var(--text-muted);">
-              <div><strong>Evidentiary Limitations:</strong> Time of death: <em>${Formatters.escapeHtml(extracted.time_of_death || 'Unknown / not established')}</em> | Cause of death: <em>${Formatters.escapeHtml(extracted.cause_of_death || 'Unknown / not established')}</em></div>
-              <div style="margin-top: 4px; font-size: 0.72rem; color: var(--text-muted);">Discovery time is preserved separately and not inferred as time of death. Motives, suspects, or penal offenses are not assumed without explicit source support.</div>
-            </div>
+            ${isPropLoss ? `
+              <div style="margin-top: 10px; padding: 10px 12px; background: rgba(59, 130, 246, 0.05); border-radius: var(--radius-sm); border: 1px solid rgba(59, 130, 246, 0.2); font-size: 0.78rem; color: var(--text-muted);">
+                <div><strong>Property Loss Evidentiary Notice:</strong> Actual occurrence time: <em>${Formatters.escapeHtml(extracted.incident_date || 'Unknown / not established')}</em> | Responsible subject: <em>Unknown / not established</em></div>
+                <div style="margin-top: 4px; font-size: 0.72rem; color: var(--text-muted);">Discovery date/time and last-confirmed-present time are preserved separately and not conflated with occurrence time. Deceased subject and cause-of-death attributes are suppressed for property-loss cases.</div>
+              </div>
+            ` : (isDeath ? `
+              <div style="margin-top: 10px; padding: 10px 12px; background: rgba(59, 130, 246, 0.05); border-radius: var(--radius-sm); border: 1px solid rgba(59, 130, 246, 0.2); font-size: 0.78rem; color: var(--text-muted);">
+                <div><strong>Evidentiary Limitations:</strong> Time of death: <em>${Formatters.escapeHtml(extracted.time_of_death || 'Unknown / not established')}</em> | Cause of death: <em>${Formatters.escapeHtml(extracted.cause_of_death || 'Unknown / not established')}</em></div>
+                <div style="margin-top: 4px; font-size: 0.72rem; color: var(--text-muted);">Discovery time is preserved separately and not inferred as time of death. Motives, suspects, or penal offenses are not assumed without explicit source support.</div>
+              </div>
+            ` : `
+              <div style="margin-top: 10px; padding: 10px 12px; background: rgba(107, 114, 128, 0.05); border-radius: var(--radius-sm); border: 1px solid rgba(107, 114, 128, 0.2); font-size: 0.78rem; color: var(--text-muted);">
+                <div><strong>Notice:</strong> Document classification is ambiguous. Investigating Officer must review candidate values and assign correct incident attributes before authoritative registration.</div>
+              </div>
+            `)}
 
             <!-- Verbatim Source Quotes Accordion -->
             <div style="margin-top: 12px;">
-              <div style="font-weight: 700; font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Grounding Source Passages (${extracted.source_passages.length})</div>
+              <div style="font-weight: 700; font-size: 0.74rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px;">Grounding Source Passages (${extracted.source_passages ? extracted.source_passages.length : 0})</div>
               <div style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto;">
-                ${extracted.source_passages.map(sp => `
+                ${(extracted.source_passages || []).map(sp => `
                   <div class="fir-source-quote-box" style="margin-top: 0; padding: 6px 10px;">
                     "${Formatters.escapeHtml(sp.quote)}"
                     <div class="fir-quote-meta">
@@ -2894,12 +2978,15 @@ const ScreenCases = {
       return;
     }
 
+    const isPropLoss = ScreenCases._extractedFirData?.incident_type === "PROPERTY_LOSS";
     const dateStr = document.getElementById("inpFirCandidateDate")?.value.trim();
     const reportDateStr = document.getElementById("inpFirCandidateReportDate")?.value.trim();
     const discoveryTimeStr = document.getElementById("inpFirCandidateDiscoveryTime")?.value.trim();
+    const lastPresentStr = document.getElementById("inpFirCandidateLastPresent")?.value.trim();
+    const propItemsStr = document.getElementById("inpFirCandidatePropertyItems")?.value.trim();
     const loc = document.getElementById("inpFirCandidateLocation")?.value.trim();
     const comp = document.getElementById("inpFirCandidateComplainant")?.value.trim();
-    const vic = document.getElementById("inpFirCandidateVictim")?.value.trim();
+    const vic = isPropLoss ? null : (document.getElementById("inpFirCandidateVictim")?.value.trim() || null);
     const sec = document.getElementById("inpFirCandidateSections")?.value.trim();
     const rawText = document.getElementById("inpFirPastedText")?.value || "";
 
@@ -2935,17 +3022,24 @@ const ScreenCases = {
         fir_metadata: {
           fir_number: firNum,
           police_station: station,
-          incident_date: dateStr || discoveryTimeStr || new Date().toISOString(),
+          incident_date: dateStr || (isPropLoss ? "Unknown / not established" : (discoveryTimeStr || new Date().toISOString())),
           report_date: reportDateStr || null,
           incident_location: loc || "Scene of occurrence unrecorded",
           victim_name: vic || null,
           complainant_name: comp || null,
+          incident_type: ScreenCases._extractedFirData?.incident_type || "NEEDS_REVIEW",
+          discovery_time: discoveryTimeStr || null,
+          last_confirmed_present: lastPresentStr || null,
+          property_items: propItemsStr || null,
           additional_attributes: {
+            incident_type: ScreenCases._extractedFirData?.incident_type || "NEEDS_REVIEW",
             discovery_time: discoveryTimeStr || null,
+            last_confirmed_present: lastPresentStr || null,
+            property_items: propItemsStr || null,
             offense_sections: sec || null,
             witness_sightings: ScreenCases._extractedFirData?.witness_sightings || [],
-            time_of_death: ScreenCases._extractedFirData?.time_of_death || "Unknown / not established",
-            cause_of_death: ScreenCases._extractedFirData?.cause_of_death || "Unknown / not established",
+            time_of_death: isPropLoss ? null : (ScreenCases._extractedFirData?.time_of_death || "Unknown / not established"),
+            cause_of_death: isPropLoss ? null : (ScreenCases._extractedFirData?.cause_of_death || "Unknown / not established"),
             candidate_extractions: ScreenCases._extractedFirData,
             reviewer_modifications: ScreenCases._reviewerModifications || {},
             source_passages: ScreenCases._extractedFirData?.source_passages || [],
@@ -2955,8 +3049,8 @@ const ScreenCases = {
         discovery_time: discoveryTimeStr || null,
         offense_sections: sec || null,
         witness_sightings: ScreenCases._extractedFirData?.witness_sightings || [],
-        time_of_death: ScreenCases._extractedFirData?.time_of_death,
-        cause_of_death: ScreenCases._extractedFirData?.cause_of_death,
+        time_of_death: isPropLoss ? null : ScreenCases._extractedFirData?.time_of_death,
+        cause_of_death: isPropLoss ? null : ScreenCases._extractedFirData?.cause_of_death,
         candidate_extractions: ScreenCases._extractedFirData,
         reviewer_modifications: ScreenCases._reviewerModifications || {},
         source_passages: ScreenCases._extractedFirData?.source_passages || [],
@@ -3221,6 +3315,9 @@ async function ensureActiveCaseLoaded(caseId) {
 
   try {
     State.activeStageInfo = await Api.getCaseStage(caseId);
+    if (State.activeCase && State.activeStageInfo && State.activeStageInfo.current_stage) {
+      State.activeCase.lifecycle_stage = State.activeStageInfo.current_stage;
+    }
     const evRes = await Api.listEvidence(caseId);
     State.evidence = evRes.items || [];
     State.evidenceLoadError = null;
@@ -4231,19 +4328,19 @@ const ScreenEvidence = {
   // ─────────────────────────────────────────────────────────────────────────
   showRegisterEvidenceModal() {
     const c = State.activeCase;
-    let selectedFile = null;
+    let selectedFiles = [];
 
     const bodyHtml = `
       <div id="uploadContainer">
         <!-- Step 1: Drag & Drop Area -->
         <div class="evidence-dropzone" id="evidenceDropzone">
-          <input type="file" id="inpEvidenceFileHidden" style="display: none;">
+          <input type="file" id="inpEvidenceFileHidden" multiple style="display: none;">
           <div class="evidence-dropzone-title">What would you like to attach?</div>
           <p style="color: var(--text-muted); font-size: 0.82rem; margin-bottom: 12px;">
-            Drag and drop a file here, or click to choose from your computer
+            Drag and drop files here, or click to choose from your computer (select multiple files to upload in batch)
           </p>
           <button type="button" class="btn btn-secondary btn-sm" id="btnChooseFile">
-            Choose Evidence File
+            Choose Evidence Files
           </button>
           <div class="evidence-dropzone-examples">
             <span class="evidence-dropzone-pill">Documents</span>
@@ -4254,21 +4351,24 @@ const ScreenEvidence = {
           </div>
         </div>
 
-        <!-- Step 2: Selected File Info & Descriptive Form (Hidden until file selected) -->
+        <!-- Step 2: Selected Files Info & Descriptive Form (Hidden until files selected) -->
         <div id="fileSelectedFormArea" style="display: none;">
-          <div class="file-selected-summary">
-            <div class="file-selected-info">
-              <div>
-                <div class="file-selected-name" id="fileSelectedName">filename.ext</div>
-                <div class="file-selected-meta">
-                  <span class="badge badge-verified" id="fileDetectedFormatBadge">PDF Document</span>
-                  <span id="fileSelectedSize">137 KB</span>
-                </div>
-              </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="font-size: 0.84rem; font-weight: 600; color: var(--text-main);" id="lblSelectedFilesSummary">
+              0 files selected
             </div>
-            <button type="button" class="btn btn-secondary btn-sm" id="btnChangeFile" style="font-size: 0.76rem;">
-              Change File
-            </button>
+            <div style="display: flex; gap: 6px;">
+              <button type="button" class="btn btn-secondary btn-sm" id="btnAddMoreFiles" style="font-size: 0.76rem; padding: 4px 8px;">
+                + Add More
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" id="btnClearFiles" style="font-size: 0.76rem; padding: 4px 8px; color: var(--danger);">
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <!-- Scrollable Selected Files List -->
+          <div id="selectedFilesList" style="max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; border: 1px solid var(--border-default); border-radius: var(--radius-md); padding: 8px; background: var(--bg-card-subtle);">
           </div>
 
           <form id="evidenceMetadataForm">
@@ -4279,7 +4379,7 @@ const ScreenEvidence = {
 
             <div class="grid-2">
               <div class="form-group">
-                <label class="form-label" for="inpEvidenceCat">Evidence Category *</label>
+                <label class="form-label" for="inpEvidenceCat">Default Evidence Category *</label>
                 <select id="inpEvidenceCat" class="form-select">
                   <option value="DOCUMENT_PDF">General Case Document / Statement / Register (PDF)</option>
                   <option value="MEDICAL_REPORT">Medical / Autopsy / Inquest Report (PDF)</option>
@@ -4312,14 +4412,14 @@ const ScreenEvidence = {
 
             <div class="form-group">
               <label class="form-label" for="inpEvidenceDesc">Notes</label>
-              <textarea id="inpEvidenceDesc" class="form-textarea" placeholder="Add any relevant observations regarding this exhibit..."></textarea>
+              <textarea id="inpEvidenceDesc" class="form-textarea" placeholder="Add any relevant observations regarding these exhibits..."></textarea>
             </div>
 
             <!-- Technical MIME Information (Hidden in Collapsed Details) -->
             <details style="margin-top: 10px; font-size: 0.76rem; color: var(--text-muted);">
               <summary style="cursor: pointer; user-select: none;">Technical Details (Automated)</summary>
               <div style="padding: 8px 10px; background-color: var(--bg-card-subtle); border-radius: var(--radius-sm); margin-top: 4px;">
-                Detected MIME Type: <code id="lblDetectedMime" style="font-family: var(--font-mono); color: var(--primary);">application/pdf</code> (auto-assigned)
+                MIME types and format signatures are automatically sniffed and verified per exhibit during forensic validation.
               </div>
             </details>
           </form>
@@ -4339,36 +4439,108 @@ const ScreenEvidence = {
     const dropzone = document.getElementById("evidenceDropzone");
     const formArea = document.getElementById("fileSelectedFormArea");
     const submitBtn = document.getElementById("btnSubmitIntake");
+    const selectedFilesList = document.getElementById("selectedFilesList");
+    const summaryLabel = document.getElementById("lblSelectedFilesSummary");
+    const addMoreBtn = document.getElementById("btnAddMoreFiles");
+    const clearBtn = document.getElementById("btnClearFiles");
 
-    const onFileSelected = (file) => {
-      if (!file) return;
-      selectedFile = file;
-
-      const formatInfo = Formatters.detectFileFormat(file.name);
-      document.getElementById("fileSelectedIcon").textContent = formatInfo.icon;
-      document.getElementById("fileSelectedName").textContent = file.name;
-      document.getElementById("fileDetectedFormatBadge").textContent = formatInfo.label;
-      document.getElementById("fileSelectedSize").textContent = Formatters.formatBytes(file.size);
-      document.getElementById("lblDetectedMime").textContent = file.type || formatInfo.mime;
-
-      const catSelect = document.getElementById("inpEvidenceCat");
-      if (formatInfo.defaultCategory && catSelect) {
-        catSelect.value = formatInfo.defaultCategory;
+    const renderSelectedFiles = () => {
+      if (selectedFiles.length === 0) {
+        hiddenInput.value = "";
+        dropzone.style.display = "block";
+        formArea.style.display = "none";
+        submitBtn.style.display = "none";
+        return;
       }
 
       dropzone.style.display = "none";
       formArea.style.display = "block";
       submitBtn.style.display = "inline-flex";
+      submitBtn.disabled = false;
+      submitBtn.textContent = selectedFiles.length > 1
+        ? `Register ${selectedFiles.length} Exhibits`
+        : "Register Evidence";
+
+      const totalBytes = selectedFiles.reduce((sum, f) => sum + (f.size || 0), 0);
+      summaryLabel.textContent = `${selectedFiles.length} file(s) selected (${Formatters.formatBytes(totalBytes)})`;
+
+      selectedFilesList.innerHTML = selectedFiles.map((f, idx) => {
+        const formatInfo = Formatters.detectFileFormat(f.name);
+        return `
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);">
+            <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+              <span style="font-weight: 600; font-size: 0.84rem; color: var(--text-main); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${Formatters.escapeHtml(f.name)}">
+                ${Formatters.escapeHtml(f.name)}
+              </span>
+              <span class="badge badge-neutral" style="font-size: 0.72rem; padding: 2px 6px;">
+                ${formatInfo.label}
+              </span>
+              <span style="font-size: 0.74rem; color: var(--text-muted); font-family: var(--font-mono);">
+                ${Formatters.formatBytes(f.size)}
+              </span>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm btn-remove-file" data-idx="${idx}" style="font-size: 0.72rem; padding: 2px 6px; line-height: 1; color: var(--text-muted);" title="Remove file">
+              &times;
+            </button>
+          </div>
+        `;
+      }).join("");
+
+      selectedFilesList.querySelectorAll(".btn-remove-file").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const removeIdx = parseInt(btn.getAttribute("data-idx"), 10);
+          if (!isNaN(removeIdx) && removeIdx >= 0 && removeIdx < selectedFiles.length) {
+            selectedFiles.splice(removeIdx, 1);
+            renderSelectedFiles();
+          }
+        });
+      });
+
+      // Auto-set category if first file provides a sensible default
+      const catSelect = document.getElementById("inpEvidenceCat");
+      if (catSelect && selectedFiles.length > 0) {
+        const firstFmt = Formatters.detectFileFormat(selectedFiles[0].name);
+        if (firstFmt.defaultCategory && firstFmt.defaultCategory !== "OTHER") {
+          catSelect.value = firstFmt.defaultCategory;
+        }
+      }
+    };
+
+    const addFiles = (files) => {
+      if (!files || files.length === 0) return;
+      let added = 0;
+      for (const f of Array.from(files)) {
+        if (!f) continue;
+        if (f.size === 0) {
+          UI.showToast(`Skipped empty file "${f.name}" (0 bytes).`, "warning");
+          continue;
+        }
+        const alreadyInBatch = selectedFiles.some(existing => existing.name === f.name && existing.size === f.size);
+        if (!alreadyInBatch) {
+          selectedFiles.push(f);
+          added++;
+        }
+      }
+      if (added > 0 || selectedFiles.length > 0) {
+        renderSelectedFiles();
+      }
     };
 
     chooseBtn?.addEventListener("click", () => hiddenInput.click());
+    addMoreBtn?.addEventListener("click", () => hiddenInput.click());
+    clearBtn?.addEventListener("click", () => {
+      selectedFiles = [];
+      renderSelectedFiles();
+    });
+
     dropzone?.addEventListener("click", (e) => {
       if (e.target !== chooseBtn) hiddenInput.click();
     });
 
     hiddenInput?.addEventListener("change", (e) => {
       if (e.target.files && e.target.files.length > 0) {
-        onFileSelected(e.target.files[0]);
+        addFiles(e.target.files);
       }
     });
 
@@ -4384,25 +4556,17 @@ const ScreenEvidence = {
       e.preventDefault();
       dropzone.classList.remove("dragover");
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        onFileSelected(e.dataTransfer.files[0]);
+        addFiles(e.dataTransfer.files);
       }
-    });
-
-    document.getElementById("btnChangeFile")?.addEventListener("click", () => {
-      selectedFile = null;
-      hiddenInput.value = "";
-      dropzone.style.display = "block";
-      formArea.style.display = "none";
-      submitBtn.style.display = "none";
     });
 
     submitBtn?.addEventListener("click", async () => {
-      if (!selectedFile) {
-        UI.showToast("Please choose an evidence file to attach.", "error");
+      if (selectedFiles.length === 0) {
+        UI.showToast("Please choose at least one evidence file to attach.", "error");
         return;
       }
 
-      const category = document.getElementById("inpEvidenceCat").value;
+      const defaultCategory = document.getElementById("inpEvidenceCat").value;
       const collectDate = document.getElementById("inpCollectDate").value;
       const collectLoc = document.getElementById("inpCollectLoc").value.trim();
       const source = document.getElementById("inpSource").value.trim();
@@ -4413,59 +4577,137 @@ const ScreenEvidence = {
         return;
       }
 
-      const formatInfo = Formatters.detectFileFormat(selectedFile.name);
-      const detectedMime = selectedFile.type || formatInfo.mime;
+      // Check if case is closed
+      if (c.lifecycle_stage === "CLOSED") {
+        UI.showToast("Evidence cannot be intaked for a closed case. Reopen case first.", "error");
+        return;
+      }
 
-      // Automatically advance to EVIDENCE_INGESTION if currently in INITIALIZED
-      if (c.lifecycle_stage === "INITIALIZED") {
-        try {
-          await Api.updateCaseStage(c.case_id, "EVIDENCE_INGESTION");
-          c.lifecycle_stage = "EVIDENCE_INGESTION";
-        } catch (stgErr) {
-          console.warn("Auto-transition notice:", stgErr);
+      // Automatically advance to EVIDENCE_INGESTION if currently in an allowed prior stage
+      if (c.lifecycle_stage !== "EVIDENCE_INGESTION") {
+        if (["INITIALIZED", "EVIDENCE_PROCESSING", "ANALYSIS", "REVIEW", "REOPENED"].includes(c.lifecycle_stage)) {
+          try {
+            await Api.updateCaseStage(c.case_id, "EVIDENCE_INGESTION");
+            c.lifecycle_stage = "EVIDENCE_INGESTION";
+            if (State.activeStageInfo) State.activeStageInfo.current_stage = "EVIDENCE_INGESTION";
+          } catch (stgErr) {
+            console.warn("Auto-transition to EVIDENCE_INGESTION notice:", stgErr);
+          }
         }
       }
 
-      const formData = new FormData();
-      formData.append("file", selectedFile);
-      formData.append("evidence_category", category);
-      formData.append("declared_mime_type", detectedMime);
-      if (collectDate) formData.append("collection_datetime", new Date(collectDate).toISOString());
-      if (collectLoc) formData.append("collection_location", collectLoc);
-      if (source) formData.append("source_device_or_person", source);
-      if (desc) formData.append("description", desc);
-
       submitBtn.disabled = true;
-      submitBtn.textContent = "Preserving Exhibit...";
 
+      // Pre-fetch existing exhibits for deduplication / reconciliation
+      let existingExhibits = [];
       try {
-        const res = await Api.intakeEvidence(c.case_id, formData);
-        UI.closeModal();
-        UI.showToast(`Exhibit "${res.original_file_name}" registered successfully!`, "success");
-        UI.recordAudit("EXHIBIT_ATTACHED", res.evidence_id, "SUCCESS", `File: ${res.original_file_name}`);
-        await ScreenEvidence.render(c.case_id);
-        ScreenEvidence.openEvidenceDetailDrawer(res.evidence_id, res.case_id || c.case_id);
-      } catch (err) {
-        // Safe timeout reconciliation: Check if intake succeeded before prompting duplicate upload
-        try {
-          const listRes = await Api.listEvidence(c.case_id);
-          const exhibits = listRes.items || (Array.isArray(listRes) ? listRes : []);
-          const matched = exhibits.find(e => e.original_file_name === selectedFile.name);
-          if (matched) {
-            UI.closeModal();
-            UI.showToast(`Exhibit "${matched.original_file_name}" verified and registered!`, "success");
-            UI.recordAudit("EXHIBIT_RECONCILED", matched.evidence_id, "SUCCESS", `Reconciled after intake timeout: ${matched.original_file_name}`);
-            await ScreenEvidence.render(c.case_id);
-            ScreenEvidence.openEvidenceDetailDrawer(matched.evidence_id, matched.case_id || c.case_id);
-            return;
-          }
-        } catch (recErr) {
-          console.warn("Intake reconciliation check notice:", recErr);
+        const listRes = await Api.listEvidence(c.case_id);
+        existingExhibits = listRes.items || (Array.isArray(listRes) ? listRes : []);
+      } catch (e) {
+        console.warn("Pre-fetch exhibits notice:", e);
+      }
+
+      const results = [];
+      const totalToUpload = selectedFiles.length;
+
+      for (let i = 0; i < totalToUpload; i++) {
+        const file = selectedFiles[i];
+        submitBtn.textContent = totalToUpload > 1
+          ? `Preserving Exhibit ${i + 1} of ${totalToUpload}...`
+          : "Preserving Exhibit...";
+
+        // Check if file is already registered with identical name & size to prevent unintended duplicates
+        const existing = existingExhibits.find(e => e.original_file_name === file.name && e.file_size_bytes === file.size);
+        if (existing) {
+          results.push({
+            name: file.name,
+            success: true,
+            reconciled: true,
+            evidence_id: existing.evidence_id,
+            status: existing.status
+          });
+          continue;
         }
 
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Register Evidence";
-        UI.showToast(`Registration failed: ${err.message}`, "error");
+        const formatInfo = Formatters.detectFileFormat(file.name);
+        const detectedMime = file.type || formatInfo.mime;
+        // Use detected category if specific, otherwise use form default
+        const category = (formatInfo.defaultCategory && formatInfo.defaultCategory !== "OTHER")
+          ? formatInfo.defaultCategory
+          : defaultCategory;
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("evidence_category", category);
+        formData.append("declared_mime_type", detectedMime);
+        if (collectDate) formData.append("collection_datetime", new Date(collectDate).toISOString());
+        if (collectLoc) formData.append("collection_location", collectLoc);
+        if (source) formData.append("source_device_or_person", source);
+        if (desc) formData.append("description", desc);
+
+        try {
+          const res = await Api.intakeEvidence(c.case_id, formData);
+          results.push({
+            name: res.original_file_name || file.name,
+            success: true,
+            evidence_id: res.evidence_id,
+            case_id: res.case_id || c.case_id,
+            status: res.status
+          });
+          UI.recordAudit("EXHIBIT_ATTACHED", res.evidence_id, "SUCCESS", `File: ${res.original_file_name}`);
+        } catch (err) {
+          // Safe timeout reconciliation check
+          let reconciled = false;
+          try {
+            const listRes = await Api.listEvidence(c.case_id);
+            const exhibits = listRes.items || (Array.isArray(listRes) ? listRes : []);
+            const matched = exhibits.find(e => e.original_file_name === file.name);
+            if (matched) {
+              results.push({
+                name: matched.original_file_name,
+                success: true,
+                reconciled: true,
+                evidence_id: matched.evidence_id,
+                case_id: matched.case_id || c.case_id,
+                status: matched.status
+              });
+              UI.recordAudit("EXHIBIT_RECONCILED", matched.evidence_id, "SUCCESS", `Reconciled after intake timeout: ${matched.original_file_name}`);
+              reconciled = true;
+            }
+          } catch (recErr) {
+            console.warn("Intake reconciliation check notice:", recErr);
+          }
+
+          if (!reconciled) {
+            results.push({
+              name: file.name,
+              success: false,
+              error: err.message
+            });
+          }
+        }
+      }
+
+      UI.closeModal();
+
+      // Refresh case and evidence register
+      await ensureActiveCaseLoaded(c.case_id);
+      await ScreenEvidence.render(c.case_id);
+
+      const successful = results.filter(r => r.success);
+      const failed = results.filter(r => !r.success);
+
+      if (failed.length === 0) {
+        if (successful.length === 1) {
+          UI.showToast(`Exhibit "${successful[0].name}" registered successfully!`, "success");
+          ScreenEvidence.openEvidenceDetailDrawer(successful[0].evidence_id, successful[0].case_id || c.case_id);
+        } else {
+          UI.showToast(`All ${successful.length} exhibits registered successfully!`, "success");
+        }
+      } else if (successful.length > 0) {
+        UI.showToast(`Registered ${successful.length} exhibit(s). ${failed.length} failed: ${failed.map(f => f.name).join(", ")}`, "warning");
+      } else {
+        UI.showToast(`Registration failed: ${failed.map(f => `${f.name} (${f.error})`).join("; ")}`, "error");
       }
     });
   },
@@ -4891,10 +5133,10 @@ const ScreenEvidence = {
                             </td>
                             <td style="text-align: right;">
                               <div style="display: flex; gap: 4px; justify-content: flex-end;">
-                                <button type="button" class="btn btn-secondary btn-sm" style="font-size: 0.68rem; padding: 2px 6px;" title="Confirm this extracted fact" onclick='ScreenEvidence.showFactReviewModal("${caseId}", "${evidenceId}", ${JSON.stringify(supportingFact).replace(/"/g, '&quot;')}, "CONFIRMED")'>
+                                <button type="button" class="btn btn-secondary btn-sm" style="font-size: 0.68rem; padding: 2px 6px;" title="1-click confirm source support" onclick='ScreenEvidence.quickConfirmFact("${caseId}", "${evidenceId}", "${supportingFact.fact_id}", this)'>
                                   ✓ Confirm
                                 </button>
-                                <button type="button" class="btn btn-secondary btn-sm" style="font-size: 0.68rem; padding: 2px 6px;" title="Correct / Amend wording" onclick='ScreenEvidence.showFactReviewModal("${caseId}", "${evidenceId}", ${JSON.stringify(supportingFact).replace(/"/g, '&quot;')}, "CORRECTED")'>
+                                <button type="button" class="btn btn-secondary btn-sm" style="font-size: 0.68rem; padding: 2px 6px;" title="Review or amend" onclick='ScreenEvidence.showFactReviewModal("${caseId}", "${evidenceId}", ${JSON.stringify(supportingFact).replace(/"/g, '&quot;')}, "CORRECTED")'>
                                   ✏️ Correct / Amend
                                 </button>
                                 <button type="button" class="btn btn-secondary btn-sm" style="font-size: 0.68rem; padding: 2px 6px;" title="Flag or mark disputed" onclick='ScreenEvidence.showFactReviewModal("${caseId}", "${evidenceId}", ${JSON.stringify(supportingFact).replace(/"/g, '&quot;')}, "FLAGGED")'>
@@ -5221,43 +5463,102 @@ const ScreenEvidence = {
       this.showCustodyCertificateModal(ev);
     });
 
-    document.getElementById("btnExtractFacts")?.addEventListener("click", async () => {
+    document.getElementById("btnExtractFacts")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      btn.disabled = true;
       try {
         UI.showToast("Extracting document facts...", "info");
-        await Api.triggerExtractFacts(caseId, evidenceId);
-        UI.showToast("Document facts extracted successfully", "success");
+        const res = await Api.triggerExtractFacts(caseId, evidenceId, true);
+        if (res && res.indexing_status === "INDEXING_FAILED") {
+          UI.showToast(`Extraction incomplete: ${res.message || res.processing_status_label}`, "warning");
+        } else if (res && !res.is_supported) {
+          UI.showToast(res.message || "Document format not supported for text extraction", "warning");
+        } else if (res && (res.total_facts === 0 || (res.facts && res.facts.length === 0))) {
+          UI.showToast(res.message || "No structured facts could be extracted from this document", "info");
+        } else {
+          const count = res?.total_facts || res?.facts?.length || 0;
+          UI.showToast(`Extracted ${count} source-grounded fact(s) successfully!`, "success");
+        }
         await this.openEvidenceDetailDrawer(evidenceId, caseId);
       } catch (err) {
         UI.showToast(`Extraction failed: ${err.message}`, "error");
+      } finally {
+        btn.disabled = false;
       }
     });
 
-    document.getElementById("btnReExtractFacts")?.addEventListener("click", async () => {
+    document.getElementById("btnReExtractFacts")?.addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      if (btn.disabled) return;
+      btn.disabled = true;
       try {
         UI.showToast("Re-extracting document facts...", "info");
-        await Api.triggerExtractFacts(caseId, evidenceId);
-        UI.showToast("Document facts re-extracted successfully", "success");
+        const res = await Api.triggerExtractFacts(caseId, evidenceId, true);
+        if (res && res.indexing_status === "INDEXING_FAILED") {
+          UI.showToast(`Re-extraction incomplete: ${res.message || res.processing_status_label}`, "warning");
+        } else if (res && !res.is_supported) {
+          UI.showToast(res.message || "Document format not supported for text extraction", "warning");
+        } else if (res && (res.total_facts === 0 || (res.facts && res.facts.length === 0))) {
+          UI.showToast(res.message || "No structured facts could be extracted from this document", "info");
+        } else {
+          const count = res?.total_facts || res?.facts?.length || 0;
+          UI.showToast(`Re-extracted ${count} source-grounded fact(s) successfully!`, "success");
+        }
         await this.openEvidenceDetailDrawer(evidenceId, caseId);
       } catch (err) {
         UI.showToast(`Re-extraction failed: ${err.message}`, "error");
+      } finally {
+        btn.disabled = false;
       }
     });
   },
 
+  async quickConfirmFact(caseId, evidenceId, factId, btnEl) {
+    if (btnEl) {
+      if (btnEl.disabled) return;
+      btnEl.disabled = true;
+      btnEl.innerText = "Confirming...";
+    }
+    try {
+      UI.showToast("Confirming source support...", "info");
+      await Api.recordFactDecision(caseId, evidenceId, factId, {
+        decision: "CONFIRMED",
+        reason: "Confirmed source support by investigating officer.",
+        notes: `Quick confirmed by officer ${State.auth.subjectId || 'Lead IO'}`
+      });
+      UI.recordAudit("FACT_REVIEW_DECISION", `${evidenceId}:${factId}`, "SUCCESS", "Decision: CONFIRMED, 1-click confirmation");
+      UI.showToast("Fact source support confirmed successfully", "success");
+      await ScreenEvidence.openEvidenceDetailDrawer(evidenceId, caseId);
+    } catch (err) {
+      UI.showToast(`Failed to confirm fact: ${err.message}`, "error");
+      if (btnEl) {
+        btnEl.disabled = false;
+        btnEl.innerText = "✓ Confirm";
+      }
+    }
+  },
+
   showFactReviewModal(caseId, evidenceId, fact, defaultDecision = "CONFIRMED") {
     const isCorrection = defaultDecision === "CORRECTED";
+    const isConfirmed = defaultDecision === "CONFIRMED";
     const modalHtml = `
       <div style="font-size: 0.88rem; line-height: 1.5;">
         <div style="margin-bottom: 12px; padding: 10px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border-left: 3px solid var(--primary);">
           <div style="font-size: 0.72rem; text-transform: uppercase; color: var(--primary); font-weight: 700;">Extracted Forensic Claim (${fact.fact_id})</div>
           <div style="font-weight: 600; color: var(--text-main); margin-top: 4px;">${Formatters.escapeHtml(fact.fact_text || fact.fact_statement || '')}</div>
           <div style="font-size: 0.74rem; color: var(--text-muted); margin-top: 4px;">Source: p.${fact.page_number || 1} &bull; ${fact.attribution_type}</div>
+          ${fact.source_passage ? `
+            <div style="margin-top: 6px; padding: 6px 8px; background: var(--bg-card); border-left: 2px solid var(--border-default); font-size: 0.76rem; color: var(--text-secondary); font-style: italic;">
+              "${Formatters.escapeHtml(fact.source_passage)}"
+            </div>
+          ` : ''}
         </div>
 
         <div style="margin-bottom: 12px;">
           <label style="display: block; font-weight: 600; font-size: 0.8rem; margin-bottom: 4px;">Investigator Review Decision</label>
           <select id="reviewDecisionSelect" class="form-control" style="width: 100%; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-default);">
-            <option value="CONFIRMED" ${defaultDecision === 'CONFIRMED' ? 'selected' : ''}>Confirm Fact (Corroborated by Investigator)</option>
+            <option value="CONFIRMED" ${defaultDecision === 'CONFIRMED' ? 'selected' : ''}>Confirm Source Support (Extracted Claim Grounded in Document)</option>
             <option value="CORRECTED" ${defaultDecision === 'CORRECTED' ? 'selected' : ''}>Correct / Amend Fact (Provide Corrected Wording)</option>
             <option value="FLAGGED" ${defaultDecision === 'FLAGGED' ? 'selected' : ''}>Flag / Mark Disputed (Conflicting with other Evidence)</option>
             <option value="REJECTED" ${defaultDecision === 'REJECTED' ? 'selected' : ''}>Reject Extraction (Unsupported by Source Document)</option>
@@ -5265,15 +5566,18 @@ const ScreenEvidence = {
         </div>
 
         <div id="correctedTextWrap" style="margin-bottom: 12px; ${isCorrection ? '' : 'display: none;'}">
-          <label style="display: block; font-weight: 600; font-size: 0.8rem; margin-bottom: 4px;">Corrected Statement</label>
+          <label style="display: block; font-weight: 600; font-size: 0.8rem; margin-bottom: 4px;">Corrected Statement <span style="color: var(--danger);">*</span></label>
           <textarea id="correctedFactText" class="form-control" rows="3" style="width: 100%; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); font-size: 0.84rem;">${Formatters.escapeHtml(fact.fact_text || fact.fact_statement || '')}</textarea>
         </div>
 
         <div style="margin-bottom: 12px;">
-          <label style="display: block; font-weight: 600; font-size: 0.8rem; margin-bottom: 4px;">
-            Mandatory Rationale / Reason for Decision <span style="color: var(--danger);">*</span>
+          <label id="reviewReasonLabel" style="display: block; font-weight: 600; font-size: 0.8rem; margin-bottom: 4px;">
+            ${isConfirmed ? 'Officer Rationale / Notes <span style="font-weight: 400; color: var(--text-muted);">(Optional for confirmation)</span>' : 'Mandatory Rationale / Reason for Decision <span style="color: var(--danger);">*</span>'}
           </label>
-          <textarea id="reviewReasonText" class="form-control" rows="3" placeholder="State reason, supporting evidence, or justification for this review decision..." style="width: 100%; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); font-size: 0.84rem;"></textarea>
+          <textarea id="reviewReasonText" class="form-control" rows="3" placeholder="${isConfirmed ? 'Optional: leave blank or state confirmation note...' : 'State reason, supporting evidence, or justification for this review decision...'}" style="width: 100%; padding: 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-default); font-size: 0.84rem;"></textarea>
+          <div id="reviewReasonHelp" style="font-size: 0.72rem; color: var(--text-muted); margin-top: 4px;">
+            ${isConfirmed ? 'Confirmation affirms the claim is grounded in the cited source text. It does not certify independent objective truth.' : 'Provide reason (minimum 3 characters) explaining this review action.'}
+          </div>
         </div>
 
         <div style="font-size: 0.74rem; color: var(--text-muted); font-style: italic;">
@@ -5291,9 +5595,33 @@ const ScreenEvidence = {
 
     UI.openModal(`Review Extracted Fact &bull; ${fact.fact_id}`, modalHtml, footerHtml);
 
-    document.getElementById("reviewDecisionSelect")?.addEventListener("change", (e) => {
+    const updateFieldsForDecision = (val) => {
       const wrap = document.getElementById("correctedTextWrap");
-      if (wrap) wrap.style.display = e.target.value === "CORRECTED" ? "block" : "none";
+      if (wrap) wrap.style.display = val === "CORRECTED" ? "block" : "none";
+      const lbl = document.getElementById("reviewReasonLabel");
+      const txt = document.getElementById("reviewReasonText");
+      const hlp = document.getElementById("reviewReasonHelp");
+      if (val === "CONFIRMED") {
+        if (lbl) lbl.innerHTML = `Officer Rationale / Notes <span style="font-weight: 400; color: var(--text-muted);">(Optional for confirmation)</span>`;
+        if (txt) txt.placeholder = "Optional: leave blank or state confirmation note...";
+        if (hlp) hlp.innerText = "Confirmation affirms the claim is grounded in the cited source text. It does not certify independent objective truth.";
+      } else if (val === "REJECTED") {
+        if (lbl) lbl.innerHTML = `Mandatory Reason for Rejection <span style="color: var(--danger);">*</span>`;
+        if (txt) txt.placeholder = "State why the claim is rejected (e.g., unsupported by cited passage, wrong person/date, qualifier omitted)...";
+        if (hlp) hlp.innerText = "Explain why this extraction is invalid or unsupported by the exhibit text.";
+      } else if (val === "FLAGGED") {
+        if (lbl) lbl.innerHTML = `Mandatory Disputed Reason / Conflicting Reference <span style="color: var(--danger);">*</span>`;
+        if (txt) txt.placeholder = "State conflicting evidence, contradicting statement, or discrepancy requiring investigation...";
+        if (hlp) hlp.innerText = "Specify the conflicting exhibit or testimony that creates the discrepancy.";
+      } else {
+        if (lbl) lbl.innerHTML = `Mandatory Rationale / Explanation <span style="color: var(--danger);">*</span>`;
+        if (txt) txt.placeholder = "State explanation for the amended wording...";
+        if (hlp) hlp.innerText = "Explain why the wording was corrected.";
+      }
+    };
+
+    document.getElementById("reviewDecisionSelect")?.addEventListener("change", (e) => {
+      updateFieldsForDecision(e.target.value);
     });
 
     document.getElementById("btnSubmitFactDecision")?.addEventListener("click", async () => {
@@ -5301,26 +5629,42 @@ const ScreenEvidence = {
       const reason = document.getElementById("reviewReasonText")?.value?.trim();
       const correctedText = document.getElementById("correctedFactText")?.value?.trim();
 
-      if (!reason || reason.length < 3) {
+      if (decision !== "CONFIRMED" && (!reason || reason.length < 3)) {
         UI.showToast("Please provide a valid rationale/reason for your decision (min 3 chars).", "error");
         return;
+      }
+
+      if (decision === "CORRECTED" && (!correctedText || correctedText.length < 3)) {
+        UI.showToast("Please provide the corrected wording (min 3 chars).", "error");
+        return;
+      }
+
+      const submitBtn = document.getElementById("btnSubmitFactDecision");
+      if (submitBtn) {
+        if (submitBtn.disabled) return;
+        submitBtn.disabled = true;
+        submitBtn.innerText = "Saving...";
       }
 
       try {
         UI.showToast("Recording investigator decision...", "info");
         await Api.recordFactDecision(caseId, evidenceId, fact.fact_id, {
           decision,
-          reason,
+          reason: reason || "Confirmed source support by investigating officer.",
           corrected_text: decision === "CORRECTED" ? correctedText : null,
-          notes: `Recorded by officer ${State.auth.subjectId}`
+          notes: `Recorded by officer ${State.auth.subjectId || 'Lead IO'}`
         });
 
-        UI.recordAudit("FACT_REVIEW_DECISION", `${evidenceId}:${fact.fact_id}`, "SUCCESS", `Decision: ${decision}, Reason: ${reason}`);
+        UI.recordAudit("FACT_REVIEW_DECISION", `${evidenceId}:${fact.fact_id}`, "SUCCESS", `Decision: ${decision}, Reason: ${reason || 'Source support confirmed'}`);
         UI.showToast("Fact review decision recorded successfully", "success");
         UI.closeModal();
         await ScreenEvidence.openEvidenceDetailDrawer(evidenceId, caseId);
       } catch (err) {
         UI.showToast(`Failed to record decision: ${err.message}`, "error");
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.innerText = "Save Decision";
+        }
       }
     });
   },
@@ -5845,6 +6189,12 @@ const ScreenGraph = {
   collapsedNodeIds: new Set(),
 
   async render(caseId) {
+    this.selectedNode = null;
+    this.selectedEdge = null;
+    this.searchQuery = "";
+    this.activeCategory = "ALL";
+    this.collapsedNodeIds = new Set();
+
     const container = document.getElementById("viewContainer");
     document.getElementById("breadcrumbCurrent").textContent = `${caseId} / Entity Graph`;
 
@@ -5871,7 +6221,6 @@ const ScreenGraph = {
 
       <div id="graphMountArea" style="margin-top: 16px;">
         <div style="padding: 40px; text-align: center; color: var(--text-muted);">
-          
           <div>Loading case knowledge graph...</div>
         </div>
       </div>
@@ -5879,12 +6228,22 @@ const ScreenGraph = {
 
     try {
       const data = await Api.getKnowledgeGraph(caseId);
-      this.graphData = data;
+      if (!data || typeof data !== "object") {
+        throw new Error("Invalid graph data format received from API.");
+      }
+      this.graphData = {
+        total_nodes: Array.isArray(data.nodes) ? data.nodes.length : (data.total_nodes || 0),
+        total_edges: Array.isArray(data.edges) ? data.edges.length : (data.total_edges || 0),
+        nodes: Array.isArray(data.nodes) ? data.nodes : [],
+        edges: Array.isArray(data.edges) ? data.edges : [],
+        case_id: data.case_id || caseId,
+        message: data.message || null
+      };
       this.renderGraph(caseId);
     } catch (err) {
       document.getElementById("graphMountArea").innerHTML = `
         <div class="card" style="padding: 24px; text-align: center;">
-          <p style="color: var(--danger);">Failed to load entity graph: ${Formatters.escapeHtml(err.message)}</p>
+          <p style="color: var(--danger); margin-bottom: 12px;">Failed to load entity graph: ${Formatters.escapeHtml(err.message)}</p>
           <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.render('${caseId}')">Retry</button>
         </div>
       `;
@@ -5892,7 +6251,7 @@ const ScreenGraph = {
   },
 
   conciseName(node) {
-    return String(node.name || "Unnamed entity")
+    return String(node?.name || "Unnamed entity")
       .replace(/^Forensic Exhibit Item \((.+)\)$/i, "$1")
       .replace(/^Exhibit Document$/i, "Exhibit document");
   },
@@ -5960,12 +6319,16 @@ const ScreenGraph = {
     nodes.filter(node => !assigned.has(node.id)).sort(sortNodes).forEach(node => addChild(rootId, node.id));
 
     const visibleChildren = new Map();
+    const visibleNodeIds = new Set();
     const visitVisibility = parentId => {
       const childList = children.get(parentId) || [];
       const isCollapsed = parentId !== rootId && this.collapsedNodeIds.has(parentId);
       const visible = isCollapsed ? [] : childList;
       visibleChildren.set(parentId, visible);
-      visible.forEach(child => visitVisibility(child.id));
+      visible.forEach(child => {
+        visibleNodeIds.add(child.id);
+        visitVisibility(child.id);
+      });
     };
     visitVisibility(rootId);
 
@@ -5997,9 +6360,20 @@ const ScreenGraph = {
       return x;
     };
     place(rootId, 0);
-    // A dense case can be much wider than the visible canvas.  Keep the case
-    // root near the initial viewport rather than centering it across every
-    // leaf, so an investigator sees the organising point before scrolling.
+
+    // Ensure all nodes and root have safe non-undefined coordinates
+    if (!positions.has(rootId)) {
+      positions.set(rootId, { x: Math.max(leftPadding + nodeWidth / 2, 480), y: 48 });
+    }
+    nodes.forEach((node, idx) => {
+      if (!positions.has(node.id)) {
+        positions.set(node.id, {
+          x: leftPadding + (leafIndex + idx) * (nodeWidth + leafGap) + nodeWidth / 2,
+          y: 48 + 136
+        });
+      }
+    });
+
     const rootPosition = positions.get(rootId);
     if (rootPosition) {
       const minimumRootX = leftPadding + nodeWidth / 2;
@@ -6009,7 +6383,7 @@ const ScreenGraph = {
     const height = Math.max(380, 48 + (deepestLevel + 1) * 136 + 44);
     const treeEdgeIds = new Set(selectedTreeEdges.map(edge => edge.id));
     return {
-      rootId, children, visibleChildren, positions, width, height, nodeWidth, nodeHeight,
+      rootId, children, visibleChildren, visibleNodeIds, positions, width, height, nodeWidth, nodeHeight,
       treeEdges: selectedTreeEdges,
       supplementalEdges: edges.filter(edge => !treeEdgeIds.has(edge.id)),
       nodeById
@@ -6019,7 +6393,7 @@ const ScreenGraph = {
   renderGraph(caseId) {
     const mount = document.getElementById("graphMountArea");
     if (!mount) return;
-    if (!this.graphData || this.graphData.total_nodes === 0) {
+    if (!this.graphData || this.graphData.total_nodes === 0 || !Array.isArray(this.graphData.nodes) || this.graphData.nodes.length === 0) {
       mount.innerHTML = `
         <div class="empty-state-card" style="padding: 48px 24px;">
           <h3 class="empty-state-title">No entities documented yet</h3>
@@ -6049,8 +6423,20 @@ const ScreenGraph = {
       return;
     }
 
-    const tree = this.buildTreeLayout(filteredNodes, filteredEdges);
+    let tree;
+    try {
+      tree = this.buildTreeLayout(filteredNodes, filteredEdges);
+    } catch (layoutErr) {
+      mount.innerHTML = `
+        <div class="card" style="padding: 24px; text-align: center;">
+          <p style="color: var(--danger); margin-bottom: 12px;">Layout initialization error: ${Formatters.escapeHtml(layoutErr.message)}</p>
+          <button class="btn btn-secondary btn-sm" onclick="ScreenGraph.render('${caseId}')">Retry</button>
+        </div>
+      `;
+      return;
+    }
     this.treeLayout = tree;
+
     const rootName = State.activeCase?.title || `Case ${caseId}`;
     const categoryOptions = ["ALL", "PERSON", "LOCATION", "OBJECT", "DOCUMENT", "EVENT"]
       .filter(category => category === "ALL" || allNodes.some(node => node.category === category))
@@ -6059,6 +6445,9 @@ const ScreenGraph = {
     const renderLabel = (value, x, y, className) => this.wrapNodeLabel(value).map((line, index) => `<text class="${className}" x="${x}" y="${y + index * 15}" text-anchor="middle">${Formatters.escapeHtml(line)}</text>`).join("");
     const renderNode = node => {
       const position = tree.positions.get(node.id);
+      if (!position || typeof position.x !== "number" || typeof position.y !== "number") return "";
+      const isVisible = tree.visibleNodeIds ? tree.visibleNodeIds.has(node.id) : true;
+      if (!isVisible) return "";
       const childCount = (tree.children.get(node.id) || []).length;
       const isSelected = this.selectedNode?.id === node.id;
       const isCollapsed = this.collapsedNodeIds.has(node.id);
@@ -6074,15 +6463,17 @@ const ScreenGraph = {
     const renderTreeEdge = edge => {
       const source = tree.positions.get(edge.source_node_id);
       const target = tree.positions.get(edge.target_node_id);
-      if (!source || !target) return "";
+      if (!source || !target || typeof source.x !== "number" || typeof target.x !== "number" || typeof source.y !== "number" || typeof target.y !== "number") return "";
+      if (tree.visibleNodeIds && (!tree.visibleNodeIds.has(edge.source_node_id) || !tree.visibleNodeIds.has(edge.target_node_id))) return "";
       const isSelected = this.selectedEdge?.id === edge.id;
       const startY = source.y + tree.nodeHeight / 2;
       const endY = target.y - tree.nodeHeight / 2;
       return `<path class="graph-edge graph-tree-edge ${isSelected ? "selected" : ""}" data-relationship-id="${edge.id}" d="M ${source.x} ${startY} C ${source.x} ${startY + 34}, ${target.x} ${endY - 34}, ${target.x} ${endY}" onclick="ScreenGraph.selectEdge('${edge.id}')"><title>${Formatters.escapeHtml(edge.label || edge.relation_type || "Recorded relationship")}</title></path>`;
     };
-    const root = tree.positions.get(tree.rootId);
+    const root = tree.positions.get(tree.rootId) || { x: 480, y: 48 };
     const rootEdgeHtml = (tree.visibleChildren.get(tree.rootId) || []).map(child => {
       const target = tree.positions.get(child.id);
+      if (!target || !root || typeof target.x !== "number" || typeof target.y !== "number" || typeof root.x !== "number" || typeof root.y !== "number") return "";
       const startY = root.y + tree.nodeHeight / 2;
       const endY = target.y - tree.nodeHeight / 2;
       return `<path class="graph-root-edge" d="M ${root.x} ${startY} C ${root.x} ${startY + 30}, ${target.x} ${endY - 30}, ${target.x} ${endY}"></path>`;

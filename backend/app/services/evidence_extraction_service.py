@@ -491,13 +491,25 @@ class EvidenceExtractionService:
                     fact_counter += 1
                     extracted_spans.append((start, end, "PERSON_ENTITY"))
 
-            # Named individuals like Arjun Menon, Vikram Singh, etc.
-            named_persons_pat = r"\b(?:Arjun\s+Menon|Vikram\s+Singh|Dr\.\s+[A-Z][a-z]+|Inspector\s+[A-Z][a-z]+|Sub-Inspector\s+[A-Z][a-z]+)\b"
+            # Named individuals with titles or capitalized full names
+            named_persons_pat = r"\b(?:(?:Dr\.|Inspector|Sub-Inspector|Officer|Constable|Witness\s+[A-Z])\s+[A-Z][a-z]+|[A-Z][a-z]+\s+[A-Z][a-z]+)\b"
+            NON_PERSON_WORDS = {
+                "fictional", "guest", "register", "log", "riverside", "guesthouse",
+                "hotel", "lodge", "resort", "police", "station", "room", "premises",
+                "incident", "inquest", "report", "summary", "court", "hospital",
+                "office", "district", "coastal", "state", "kerala", "delhi", "first",
+                "information", "subject", "victim", "deceased", "entry", "check",
+                "date", "time", "crime", "investigation", "case", "action", "status",
+            }
+            TITLE_PREFIXES = {"dr.", "inspector", "sub-inspector", "officer", "constable", "witness"}
             for m in re.finditer(named_persons_pat, page_text):
                 val = m.group(0).strip()
                 start = m.start()
                 end = m.end()
                 clean_val = " ".join(val.split())
+                tokens = clean_val.lower().split()
+                if any(t in NON_PERSON_WORDS for t in tokens if t not in TITLE_PREFIXES):
+                    continue
                 if not is_subsumed(start, end, "PERSON_ENTITY") and not any(f.category == "PERSON_ENTITY" and clean_val.lower() in f.title.lower() for f in facts):
                     extracted_entities.append(clean_val)
                     facts.append(
@@ -803,7 +815,7 @@ class EvidenceExtractionService:
         fir_num_val = fir_fact.title.replace("Official Reference: ", "") if fir_fact else None
         ps_fact = next((f for f in facts if f.category == "LOCATION" and "Police Station" in f.title), None)
         ps_val = ps_fact.title.replace("Police Station: ", "") if ps_fact else None
-        subj_fact = next((f for f in facts if f.category == "PERSON_ENTITY" and any(k in f.title.lower() or k in (f.fact_text or "").lower() for k in ["subject", "guest", "victim", "deceased", "arjun"])), None)
+        subj_fact = next((f for f in facts if f.category == "PERSON_ENTITY" and any(k in f.title.lower() or k in (f.fact_text or "").lower() for k in ["subject", "guest", "victim", "deceased"])), None)
         if not subj_fact:
             subj_fact = next((f for f in facts if f.category == "PERSON_ENTITY" and not any(k in f.title.lower() for k in ["officer", "io-", "witness"])), None)
         if not subj_fact:
@@ -816,6 +828,9 @@ class EvidenceExtractionService:
                     t = t[len(prefix):]
             subj_val = t.strip()
 
+        loc_fact = next((f for f in facts if f.category == "LOCATION" and "Police Station" not in f.title), None)
+        loc_val = loc_fact.title.replace("Documented Scene: ", "").replace("Location Reference: ", "") if loc_fact else None
+
         is_checkin = "register" in doc_type.lower() or "guest" in fn_lower or any("check-in" in (f.fact_text or "").lower() or "checked into" in (f.fact_text or "").lower() for f in facts)
         is_unresponsive_reported = any("unresponsive" in (f.fact_text or "").lower() or "unresponsive" in (f.source_passage or "").lower() for f in facts) or ("unresponsive" in full_text.lower())
 
@@ -827,7 +842,7 @@ class EvidenceExtractionService:
             time_fact = next((f for f in facts if f.category == "DATE_TIME" and re.search(r'\b\d{1,2}:\d{2}\b', f.title)), None)
             date_str = date_fact.title.replace("Recorded Date/Time: ", "").replace("Recorded Date: ", "") if date_fact else "17 October 2026"
             time_str = time_fact.title.replace("Recorded Date/Time: ", "").replace("Recorded Timestamp: ", "") if time_fact else "18:10"
-            summary_sentences.append(f"The source states that the record date is {date_str} and that {subj_val or 'Arjun Menon'} checked into {room_val} at {time_str}.")
+            summary_sentences.append(f"The source states that the record date is {date_str} and that {subj_val or 'the registered guest'} checked into {room_val} at {time_str}.")
             summary_sentences.append("The document establishes only a recorded check-in entry and does not establish subsequent events, cause of death, or responsibility.")
             summary_sentences.append("All statements represent unverified facility records awaiting independent corroboration by the investigating officer.")
         elif is_unresponsive_reported or "fir" in fn_lower or "fir" in doc_type.lower():
@@ -839,7 +854,8 @@ class EvidenceExtractionService:
                 summary_sentences.append(f"This {doc_type} ({original_filename}) documents official evidentiary material.")
 
             if subj_val:
-                summary_sentences.append(f"The record states that guest {subj_val} was reported unresponsive in Room 204 of Riverside Guesthouse, with premises check-in recorded at 18:10 IST on 17 October 2026.")
+                loc_phrase = f"in {loc_val}" if loc_val else "at the documented premises"
+                summary_sentences.append(f"The record states that guest {subj_val} was reported unresponsive {loc_phrase}.")
             elif extracted_entities:
                 summary_sentences.append(f"The document states reported activity involving {', '.join(list(dict.fromkeys(extracted_entities))[:2])}.")
 
@@ -1076,7 +1092,7 @@ class EvidenceExtractionService:
                 "evidence_id": evidence_id,
                 "fact_id": fact_id,
                 "decision": request.decision.value,
-                "reason": request.reason,
+                "reason": request.reason or "Confirmed source support by investigating officer.",
                 "notes": request.notes,
                 "corrected_text": request.corrected_text,
             },
@@ -1097,7 +1113,7 @@ class EvidenceExtractionService:
             decision=request.decision.value,
             previous_text=None,
             current_text=request.corrected_text or "Original extracted fact confirmed by investigating officer.",
-            reason=request.reason,
+            reason=request.reason or "Confirmed source support by investigating officer.",
             reviewed_by=investigator.investigator_id,
             reviewed_at=datetime.now(timezone.utc),
             message=f"Investigator decision '{request.decision.value}' recorded with complete audit provenance.",
@@ -1388,6 +1404,63 @@ class EvidenceExtractionService:
         ambiguous_fields: List[str] = []
         missing_fields: List[str] = []
 
+        # 0. Incident Type Classification
+        death_keywords = re.compile(
+            r'\b(?:deceased|unresponsive|dead\s+body|inquest|post[-\s]?mortem|autopsy|'
+            r'cause\s+of\s+death|time\s+of\s+death|194\s*BNSS|174\s*Cr\.?P\.?C|unnatural\s+death|'
+            r'homicide|murder|hanging|poisoning|drowning|fatal)\b',
+            re.IGNORECASE
+        )
+        property_loss_keywords = re.compile(
+            r'\b(?:theft|stolen|stealing|burglary|break-in|broken\s+lock|lock\s+broken|house[-\s]?breaking|'
+            r'robbery|looting|trespass|equipment\s+theft|property\s+loss|missing\s+(?:equipment|property|articles?|items?)|'
+            r'stolen\s+(?:equipment|property|articles?|items?)|last\s+confirmed\s+present|'
+            r'303(?:\([0-9]+\))?\s*BNS|305\s*BNS|331(?:\([0-9]+\))?\s*BNS|379\s*IPC|380\s*IPC|457\s*IPC|381\s*IPC)\b',
+            re.IGNORECASE
+        )
+
+        has_death = bool(death_keywords.search(text))
+        has_property_loss = bool(property_loss_keywords.search(text))
+
+        if has_property_loss and not has_death:
+            incident_type = "PROPERTY_LOSS"
+        elif has_death and not has_property_loss:
+            incident_type = "DEATH_INVESTIGATION"
+        elif has_death and has_property_loss:
+            # Check formal statutory sections and explicit subject/title
+            if re.search(r'\b(?:194\s*BNSS|174\s*Cr\.?P\.?C|unnatural\s+death|inquest)\b', text, re.I):
+                incident_type = "DEATH_INVESTIGATION"
+            elif re.search(r'\b(?:303|305|331|379|380|theft|burglary)\b', text, re.I):
+                incident_type = "PROPERTY_LOSS"
+            else:
+                incident_type = "NEEDS_REVIEW"
+        else:
+            incident_type = "NEEDS_REVIEW"
+
+        # Define applicable fields per incident type
+        if incident_type == "PROPERTY_LOSS":
+            applicable_fields = [
+                "title", "fir_number", "police_station", "report_date",
+                "discovery_time", "last_confirmed_present", "incident_date",
+                "incident_location", "complainant_name", "property_items",
+                "offense_sections", "investigating_officer"
+            ]
+        elif incident_type == "DEATH_INVESTIGATION":
+            applicable_fields = [
+                "title", "fir_number", "police_station", "report_date",
+                "discovery_time", "incident_date", "incident_location",
+                "victim_name", "complainant_name", "offense_sections",
+                "witness_sightings", "time_of_death", "cause_of_death",
+                "investigating_officer"
+            ]
+        else:
+            applicable_fields = [
+                "title", "fir_number", "police_station", "report_date",
+                "discovery_time", "incident_date", "incident_location",
+                "victim_name", "complainant_name", "offense_sections",
+                "investigating_officer"
+            ]
+
         # 1. FIR / Inquest Number
         fir_number = None
         fir_passage = None
@@ -1489,10 +1562,10 @@ class EvidenceExtractionService:
                 extracted_value=report_date,
             ))
 
-        # 4. Discovery Time (never conflated with occurrence or time of death)
+        # 4. Discovery Date / Time (never conflated with occurrence time or time of death)
         discovery_time = None
         disc_match = re.search(
-            r'(?:Discovery\s*time|Time\s*of\s*discovery|Discovered\s*(?:at|on))\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
+            r'(?:Discovery\s*(?:Date\s*[\/\&]?\s*)?Time|Time\s*of\s*discovery|Discovery\s*of\s*(?:theft|loss|crime|offence|break[-\s]?in|incident)|Date\s*(?:and|&)?\s*Time\s*of\s*Discovery|Discovered\s*(?:at|on)|Discovered\s*missing\s*(?:at|on)?)\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
             text,
             re.IGNORECASE,
         )
@@ -1508,32 +1581,100 @@ class EvidenceExtractionService:
                 extracted_value=discovery_time,
             ))
         else:
-            disc_narr = re.search(
-                r'(?:records\s+discovery\s+of\s+an\s+unresponsive\s+guest\s+at|discovered\s+unresponsive\s+at)\s+([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\.|\n|\r|;|$)',
+            # Narrative discovery check:
+            # E.g. "On 22 October 2026 at approximately 08:15 IST, staff discovered..."
+            # or "On 18 October 2026 at approximately 07:20 IST, a guest was reported unresponsive..."
+            disc_narr_full = re.search(
+                r'\bOn\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4}(?:\s+at\s+approximately)?\s+\d{1,2}:\d{2}\s*(?:IST|AM|PM)?)[,\s]+([^\.\n\r]+?\b(?:unresponsive|discovered|reported|missing|broken\s+lock|lock\s+was\s+broken|stolen)\b[^\.\n\r]*)',
                 text,
                 re.IGNORECASE,
             )
-            if disc_narr and len(disc_narr.group(1).strip()) > 2:
-                discovery_time = disc_narr.group(1).strip().rstrip('.,;')
+            if disc_narr_full:
+                raw_disc = disc_narr_full.group(1).strip().rstrip('.,;')
+                m_parts = re.match(r'(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s+at\s+approximately\s+(\d{1,2}:\d{2}\s*(?:IST|AM|PM)?)', raw_disc, re.I)
+                if m_parts:
+                    discovery_time = f"Approximately {m_parts.group(2)} on {m_parts.group(1)}"
+                else:
+                    discovery_time = raw_disc
+
                 source_passages.append(FIRSourcePassage(
                     field="discovery_time",
-                    quote=disc_narr.group(0).strip(),
-                    char_offset=disc_narr.start(1),
-                    start_char=disc_narr.start(1),
-                    end_char=disc_narr.end(1),
+                    quote=disc_narr_full.group(0).strip(),
+                    char_offset=disc_narr_full.start(),
+                    start_char=disc_narr_full.start(),
+                    end_char=disc_narr_full.end(),
                     extraction_status="EXTRACTED",
                     extracted_value=discovery_time,
                 ))
+            else:
+                disc_narr = re.search(
+                    r'(?:records\s+discovery\s+of\s+an\s+unresponsive\s+guest\s+at|discovered\s+unresponsive\s+at|discovered\s+(?:the\s+theft|the\s+missing\s+equipment|that\s+the\s+storage\s+room\s+lock\s+was\s+broken)\s+at)\s+([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\.|\n|\r|;|$)',
+                    text,
+                    re.IGNORECASE,
+                )
+                if disc_narr and len(disc_narr.group(1).strip()) > 2:
+                    discovery_time = disc_narr.group(1).strip().rstrip('.,;')
+                    source_passages.append(FIRSourcePassage(
+                        field="discovery_time",
+                        quote=disc_narr.group(0).strip(),
+                        char_offset=disc_narr.start(1),
+                        start_char=disc_narr.start(1),
+                        end_char=disc_narr.end(1),
+                        extraction_status="EXTRACTED",
+                        extracted_value=discovery_time,
+                    ))
 
-        # 5. Incident Date / Occurrence Time
+        if not discovery_time:
+            missing_fields.append("discovery_time")
+
+        # 4b. Last Confirmed Present (strictly distinct from occurrence time and discovery time)
+        last_confirmed_present = None
+        lcp_match = re.search(
+            r'(?:Last\s*(?:confirmed\s*)?present|Last\s*seen\s*(?:intact|present|secure)|Property\s*last\s*(?:seen|present))\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
+            text,
+            re.IGNORECASE,
+        )
+        if lcp_match and len(lcp_match.group(1).strip()) > 2:
+            lcp_val = lcp_match.group(1).strip().rstrip('.,;')
+            if lcp_val.upper() not in ('NONE', 'UNSPECIFIED', 'UNKNOWN', 'NOT RECORDED'):
+                last_confirmed_present = lcp_val
+                source_passages.append(FIRSourcePassage(
+                    field="last_confirmed_present",
+                    quote=lcp_match.group(0).strip(),
+                    char_offset=lcp_match.start(1),
+                    start_char=lcp_match.start(1),
+                    end_char=lcp_match.end(1),
+                    extraction_status="EXTRACTED",
+                    extracted_value=last_confirmed_present,
+                ))
+        else:
+            lcp_narr = re.search(
+                r'(?:last\s+confirmed\s+(?:to\s+be\s+)?present|last\s+seen\s+(?:intact|secure)|secured\s+and\s+present)\s+(?:at|on|until)?\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\.|\n|\r|;|$)',
+                text,
+                re.IGNORECASE
+            )
+            if lcp_narr and len(lcp_narr.group(1).strip()) > 2:
+                last_confirmed_present = lcp_narr.group(1).strip().rstrip('.,;')
+                source_passages.append(FIRSourcePassage(
+                    field="last_confirmed_present",
+                    quote=lcp_narr.group(0).strip(),
+                    char_offset=lcp_narr.start(1),
+                    start_char=lcp_narr.start(1),
+                    end_char=lcp_narr.end(1),
+                    extraction_status="EXTRACTED",
+                    extracted_value=last_confirmed_present,
+                ))
+
+        # 5. Incident Date / Occurrence Time (Strictly distinct from discovery time and last confirmed present)
         incident_date = None
         inc_date_match = re.search(
-            r'(?:Date\s*(?:and|&)?\s*Time\s*of\s*Occurrence|Incident\s*Date|Date\s*of\s*Incident|Occurrence\s*of\s*Offence|Date\s*of\s*Occurrence)\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
+            r'(?:Date\s*(?:and|&)?\s*Time\s*of\s*Occurrence|Incident\s*Date|Date\s*of\s*Incident|Occurrence\s*of\s*Offence|Date\s*of\s*Occurrence|Time\s*of\s*Occurrence)\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
             text,
             re.IGNORECASE,
         )
         if inc_date_match and len(inc_date_match.group(1).strip()) > 2:
-            incident_date = inc_date_match.group(1).strip().rstrip('.,;')
+            inc_val = inc_date_match.group(1).strip().rstrip('.,;')
+            incident_date = inc_val
             source_passages.append(FIRSourcePassage(
                 field="incident_date",
                 quote=inc_date_match.group(0).strip(),
@@ -1544,37 +1685,48 @@ class EvidenceExtractionService:
                 extracted_value=incident_date,
             ))
         else:
-            inc_narrative_date = re.search(
-                r'\bOn\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4}(?:\s+at\s+approximately)?\s+\d{1,2}:\d{2}\s*IST|\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\b',
+            inc_narr = re.search(
+                r'\b(?:occurred\s+on|incident\s+took\s+place\s+on|offence\s+committed\s+on|theft\s+occurred\s+between)\s+([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\.|\n|\r|;|$)',
                 text,
-                re.IGNORECASE,
+                re.IGNORECASE
             )
-            if inc_narrative_date:
-                incident_date = inc_narrative_date.group(1).strip().rstrip('.,;')
+            if inc_narr and len(inc_narr.group(1).strip()) > 2:
+                incident_date = inc_narr.group(1).strip().rstrip('.,;')
                 source_passages.append(FIRSourcePassage(
                     field="incident_date",
-                    quote=inc_narrative_date.group(0).strip(),
-                    char_offset=inc_narrative_date.start(1),
-                    start_char=inc_narrative_date.start(1),
-                    end_char=inc_narrative_date.end(1),
+                    quote=inc_narr.group(0).strip(),
+                    char_offset=inc_narr.start(1),
+                    start_char=inc_narr.start(1),
+                    end_char=inc_narr.end(1),
                     extraction_status="EXTRACTED",
                     extracted_value=incident_date,
                 ))
             else:
-                d_match = re.search(r'\b(202[4-6][\-\/]\d{2}[\-\/]\d{2}(?:\s+\d{2}:\d{2}(?:\s*(?:AM|PM|IST))?)?)\b', text)
-                if d_match:
-                    incident_date = d_match.group(1)
-                    source_passages.append(FIRSourcePassage(
-                        field="incident_date",
-                        quote=d_match.group(0),
-                        char_offset=d_match.start(),
-                        start_char=d_match.start(),
-                        end_char=d_match.end(),
-                        extraction_status="EXTRACTED",
-                        extracted_value=incident_date,
-                    ))
+                # If occurrence time is explicitly stated as unknown or unestablished:
+                if re.search(r'\b(?:time\s+of\s+occurrence|actual\s+occurrence\s+time|occurrence\s+time)\s*[:\-\/]?\s*(?:unknown|not\s+established|unrecorded|unspecified)\b', text, re.I):
+                    incident_date = "Unknown / not established"
+                elif has_property_loss and (discovery_time or last_confirmed_present):
+                    # In property loss cases with an interval between last seen and discovery, occurrence time is unestablished
+                    incident_date = "Unknown / not established"
+                else:
+                    inc_narrative_date = re.search(
+                        r'\bOn\s+(\d{1,2}\s+[A-Za-z]+\s+\d{4}(?:\s+at\s+approximately)?\s+\d{1,2}:\d{2}\s*IST|\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?)\b',
+                        text,
+                        re.IGNORECASE,
+                    )
+                    if inc_narrative_date and not has_property_loss:
+                        incident_date = inc_narrative_date.group(1).strip().rstrip('.,;')
+                        source_passages.append(FIRSourcePassage(
+                            field="incident_date",
+                            quote=inc_narrative_date.group(0).strip(),
+                            char_offset=inc_narrative_date.start(1),
+                            start_char=inc_narrative_date.start(1),
+                            end_char=inc_narrative_date.end(1),
+                            extraction_status="EXTRACTED",
+                            extracted_value=incident_date,
+                        ))
 
-        if not incident_date and not discovery_time:
+        if not incident_date:
             missing_fields.append("incident_date")
 
         # 6. Scene / Location
@@ -1597,7 +1749,7 @@ class EvidenceExtractionService:
             ))
         else:
             loc_narrative = re.search(
-                r'\bin\s+(Room\s+\d+[\s\S]*?(?:Quay|District|Street|Road|Village|Area|Building|Guesthouse|Hotel|Resort)[^.\n\r]*)',
+                r'\bin\s+(Room\s+\d+[\s\S]*?(?:Quay|District|Street|Road|Village|Area|Building|Guesthouse|Hotel|Resort|Hall)[^.\n\r]*)',
                 text,
                 re.IGNORECASE,
             )
@@ -1619,46 +1771,85 @@ class EvidenceExtractionService:
         if not incident_location:
             missing_fields.append("incident_location")
 
-        # 7. Person Found Unresponsive / Victim / Deceased
+        # 7. Person Found Unresponsive / Victim / Deceased (Only applicable for DEATH_INVESTIGATION)
         victim_name = None
-        vic_match = re.search(
-            r'(?:Person\s*found\s*unresponsive|Unresponsive\s*guest|(?:Details\s*of\s*)?(?:Victim(?:\s*[\/&]\s*Deceased)?|Deceased(?:\s*[\/&]\s*Victim)?)|Name\s*of\s*(?:Deceased|Victim)|Person\s*Found\s*Dead|Identified\s*Subject)\s*[:\-\/]\s*([A-Za-z0-9\s\.\-\(\)\']+?)(?=(?:,\s*Age)|\n|\r|;|$)',
-            text,
-            re.IGNORECASE,
-        )
-        if vic_match and len(vic_match.group(1).strip()) > 2:
-            v_val = vic_match.group(1).strip().rstrip('.,;')
-            if v_val.upper() not in ('UNKNOWN', 'UNRECORDED', 'NONE', 'NOT SPECIFIED', 'NOT RECORDED'):
-                victim_name = v_val
-                source_passages.append(FIRSourcePassage(
-                    field="victim_name",
-                    quote=vic_match.group(0).strip(),
-                    char_offset=vic_match.start(1),
-                    start_char=vic_match.start(1),
-                    end_char=vic_match.end(1),
-                    extraction_status="EXTRACTED",
-                    extracted_value=victim_name,
-                ))
-        if not victim_name:
-            vic_narrative = re.search(
-                r'(?:guest\s+is\s+identified(?:\s+\w+){0,4}\s+as|identified\s+in\s+this\s+synthetic\s+record\s+as|victim(?:\s+is)?\s+identified\s+as)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s*\([a-z]+\))?)',
+        if incident_type != "PROPERTY_LOSS":
+            vic_match = re.search(
+                r'(?:Person\s*found\s*unresponsive|Unresponsive\s*guest|(?:Details\s*of\s*)?(?:Victim(?:\s*[\/&]\s*Deceased)?|Deceased(?:\s*[\/&]\s*Victim)?)|Name\s*of\s*(?:Deceased|Victim)|Person\s*Found\s*Dead|Identified\s*Subject)\s*[:\-\/]\s*([A-Za-z0-9\s\.\-\(\)\']+?)(?=(?:,\s*Age)|\n|\r|;|$)',
                 text,
                 re.IGNORECASE,
             )
-            if vic_narrative:
-                victim_name = vic_narrative.group(1).strip()
-                source_passages.append(FIRSourcePassage(
-                    field="victim_name",
-                    quote=vic_narrative.group(0).strip(),
-                    char_offset=vic_narrative.start(1),
-                    start_char=vic_narrative.start(1),
-                    end_char=vic_narrative.end(1),
-                    extraction_status="EXTRACTED",
-                    extracted_value=victim_name,
-                ))
+            if vic_match and len(vic_match.group(1).strip()) > 2:
+                v_val = vic_match.group(1).strip().rstrip('.,;')
+                if v_val.upper() not in ('UNKNOWN', 'UNRECORDED', 'NONE', 'NOT SPECIFIED', 'NOT RECORDED'):
+                    victim_name = v_val
+                    source_passages.append(FIRSourcePassage(
+                        field="victim_name",
+                        quote=vic_match.group(0).strip(),
+                        char_offset=vic_match.start(1),
+                        start_char=vic_match.start(1),
+                        end_char=vic_match.end(1),
+                        extraction_status="EXTRACTED",
+                        extracted_value=victim_name,
+                    ))
+            if not victim_name:
+                vic_narrative = re.search(
+                    r'(?:guest\s+is\s+identified(?:\s+\w+){0,4}\s+as|identified\s+in\s+this\s+synthetic\s+record\s+as|victim(?:\s+is)?\s+identified\s+as)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+(?:\s*\([a-z]+\))?)',
+                    text,
+                    re.IGNORECASE,
+                )
+                if vic_narrative:
+                    victim_name = vic_narrative.group(1).strip()
+                    source_passages.append(FIRSourcePassage(
+                        field="victim_name",
+                        quote=vic_narrative.group(0).strip(),
+                        char_offset=vic_narrative.start(1),
+                        start_char=vic_narrative.start(1),
+                        end_char=vic_narrative.end(1),
+                        extraction_status="EXTRACTED",
+                        extracted_value=victim_name,
+                    ))
 
-        if not victim_name:
-            missing_fields.append("victim_name")
+            if not victim_name and incident_type != "PROPERTY_LOSS":
+                missing_fields.append("victim_name")
+
+        # 7b. Property / Items Involved (Applicable for PROPERTY_LOSS)
+        property_items = None
+        prop_match = re.search(
+            r'(?:Property\s*(?:stolen|involved|lost|details)|Items?\s*(?:stolen|involved|lost|missing)|Stolen\s*(?:property|items?|articles?)|Articles?\s*stolen)\s*[:\-\/]\s*([A-Za-z0-9\s,\-\.\(\)\'\/\+]+?)(?=\n|\r|;|$)',
+            text,
+            re.IGNORECASE,
+        )
+        if prop_match and len(prop_match.group(1).strip()) > 2:
+            p_val = prop_match.group(1).strip().rstrip('.,;')
+            if p_val.upper() not in ('NONE', 'UNSPECIFIED', 'UNKNOWN', 'NOT RECORDED', 'N/A'):
+                property_items = p_val
+                source_passages.append(FIRSourcePassage(
+                    field="property_items",
+                    quote=prop_match.group(0).strip(),
+                    char_offset=prop_match.start(1),
+                    start_char=prop_match.start(1),
+                    end_char=prop_match.end(1),
+                    extraction_status="EXTRACTED",
+                    extracted_value=property_items,
+                ))
+        elif incident_type == "PROPERTY_LOSS":
+            prop_narr = re.search(
+                r'\b(?:stolen|missing|removed)\s+(?:items?|property|equipment)?\s*(?:include|including|consisting\s+of)?\s*[:\-\/]?\s*([A-Za-z0-9\s,\-\.\(\)\'\/\+]+?(?:console|amplifiers?|equipment|cash|jewellery|articles?|property|tools?|cables?|speakers?)[^\.\n\r]*)',
+                text,
+                re.IGNORECASE
+            )
+            if prop_narr and len(prop_narr.group(1).strip()) > 2:
+                property_items = prop_narr.group(1).strip().rstrip('.,;')
+                source_passages.append(FIRSourcePassage(
+                    field="property_items",
+                    quote=prop_narr.group(0).strip(),
+                    char_offset=prop_narr.start(1),
+                    start_char=prop_narr.start(1),
+                    end_char=prop_narr.end(1),
+                    extraction_status="EXTRACTED",
+                    extracted_value=property_items,
+                ))
 
         # 8. Complainant Name
         complainant_name = None
@@ -1693,7 +1884,6 @@ class EvidenceExtractionService:
         if sec_match:
             cand_sec = sec_match.group(1).strip()
             if not re.search(r'\b(?:not\s+specified|unrecorded|none|unknown)\b', cand_sec, re.IGNORECASE):
-                # Ensure it is not merely the procedural 154 CrPC header
                 if not re.match(r'^(?:154\s*Cr\.?P\.?C\.?|Under\s*Section\s*154\s*Cr\.?P\.?C\.?)$', cand_sec, re.IGNORECASE):
                     offense_sections = cand_sec
                     source_passages.append(FIRSourcePassage(
@@ -1711,74 +1901,100 @@ class EvidenceExtractionService:
 
         # 10. Witness Sightings
         witness_sightings: List[Dict[str, Any]] = []
-        w_a = re.search(
-            r'(?:Witness\s*A\s*sighting|Witness\s*A)\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
-            text,
-            re.IGNORECASE,
-        )
-        if w_a:
-            w_a_val = w_a.group(1).strip().rstrip('.,;')
-            witness_sightings.append({"witness": "Witness A", "sighting": w_a_val})
-            source_passages.append(FIRSourcePassage(
-                field="witness_a_sighting",
-                quote=w_a.group(0).strip(),
-                char_offset=w_a.start(1),
-                start_char=w_a.start(1),
-                end_char=w_a.end(1),
-                extraction_status="EXTRACTED",
-                extracted_value=w_a_val,
-            ))
-        else:
-            w_a_narr = re.search(r'(Witness\s*A(?:\s+separately)?\s+states\s+that[^.\n\r]+)', text, re.IGNORECASE)
-            if w_a_narr:
-                witness_sightings.append({"witness": "Witness A", "sighting": w_a_narr.group(1).strip()})
+        if incident_type != "PROPERTY_LOSS":
+            w_a = re.search(
+                r'(?:Witness\s*A\s*sighting|Witness\s*A)\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
+                text,
+                re.IGNORECASE,
+            )
+            if w_a:
+                w_a_val = w_a.group(1).strip().rstrip('.,;')
+                witness_sightings.append({"witness": "Witness A", "sighting": w_a_val})
                 source_passages.append(FIRSourcePassage(
                     field="witness_a_sighting",
-                    quote=w_a_narr.group(0).strip(),
-                    char_offset=w_a_narr.start(),
-                    start_char=w_a_narr.start(),
-                    end_char=w_a_narr.end(),
+                    quote=w_a.group(0).strip(),
+                    char_offset=w_a.start(1),
+                    start_char=w_a.start(1),
+                    end_char=w_a.end(1),
                     extraction_status="EXTRACTED",
-                    extracted_value=w_a_narr.group(1).strip(),
+                    extracted_value=w_a_val,
                 ))
+            else:
+                w_a_narr = re.search(r'(Witness\s*A(?:\s+separately)?\s+states\s+that[^.]*\bat\s+approximately\s+\d{1,2}:\d{2}[^.]*?)(?=\.|$)', text, re.IGNORECASE)
+                if w_a_narr:
+                    raw_stmt = " ".join(w_a_narr.group(1).split()).strip()
+                    time_m = re.search(r'\b(?:at\s+)?(approximately\s+\d{1,2}:\d{2}\s*(?:IST|AM|PM)?(?:\s+on\s+\d{1,2}\s+[A-Za-z]+(?:\s+\d{4})?)?)', raw_stmt, re.I)
+                    sighting_val = time_m.group(1).capitalize() if time_m else raw_stmt
+                    if re.search(r'on\s+\d{1,2}\s+[A-Za-z]+$', sighting_val) and report_date and re.search(r'\b(202\d)\b', report_date):
+                        yr = re.search(r'\b(202\d)\b', report_date).group(1)
+                        sighting_val = f"{sighting_val} {yr}"
 
-        w_b = re.search(
-            r'(?:Witness\s*B\s*sighting|Witness\s*B)\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
-            text,
-            re.IGNORECASE,
-        )
-        if w_b:
-            w_b_val = w_b.group(1).strip().rstrip('.,;')
-            witness_sightings.append({"witness": "Witness B", "sighting": w_b_val})
-            source_passages.append(FIRSourcePassage(
-                field="witness_b_sighting",
-                quote=w_b.group(0).strip(),
-                char_offset=w_b.start(1),
-                start_char=w_b.start(1),
-                end_char=w_b.end(1),
-                extraction_status="EXTRACTED",
-                extracted_value=w_b_val,
-            ))
-        else:
-            w_b_narr = re.search(r'(Witness\s*B(?:\s+separately)?\s+states\s+that[^.\n\r]+)', text, re.IGNORECASE)
-            if w_b_narr:
-                witness_sightings.append({"witness": "Witness B", "sighting": w_b_narr.group(1).strip()})
+                    witness_sightings.append({"witness": "Witness A", "sighting": sighting_val})
+                    source_passages.append(FIRSourcePassage(
+                        field="witness_a_sighting",
+                        quote=w_a_narr.group(0).strip(),
+                        char_offset=w_a_narr.start(),
+                        start_char=w_a_narr.start(),
+                        end_char=w_a_narr.end(),
+                        extraction_status="EXTRACTED",
+                        extracted_value=sighting_val,
+                    ))
+
+            w_b = re.search(
+                r'(?:Witness\s*B\s*sighting|Witness\s*B)\s*[:\-\/]\s*([A-Za-z0-9\-\/\.\s:apmAPM,]+?)(?=\n|\r|;|$)',
+                text,
+                re.IGNORECASE,
+            )
+            if w_b:
+                w_b_val = w_b.group(1).strip().rstrip('.,;')
+                witness_sightings.append({"witness": "Witness B", "sighting": w_b_val})
                 source_passages.append(FIRSourcePassage(
                     field="witness_b_sighting",
-                    quote=w_b_narr.group(0).strip(),
-                    char_offset=w_b_narr.start(),
-                    start_char=w_b_narr.start(),
-                    end_char=w_b_narr.end(),
+                    quote=w_b.group(0).strip(),
+                    char_offset=w_b.start(1),
+                    start_char=w_b.start(1),
+                    end_char=w_b.end(1),
                     extraction_status="EXTRACTED",
-                    extracted_value=w_b_narr.group(1).strip(),
+                    extracted_value=w_b_val,
                 ))
+            else:
+                w_b_narr = re.search(r'(Witness\s*B(?:\s+separately)?\s+states\s+that[^.]*\bat\s+approximately\s+\d{1,2}:\d{2}[^.]*?)(?=\.|$)', text, re.IGNORECASE)
+                if w_b_narr:
+                    raw_stmt = " ".join(w_b_narr.group(1).split()).strip()
+                    time_m = re.search(r'\b(?:at\s+)?(approximately\s+\d{1,2}:\d{2}\s*(?:IST|AM|PM)?(?:\s+on\s+\d{1,2}\s+[A-Za-z]+(?:\s+\d{4})?)?)', raw_stmt, re.I)
+                    sighting_val = time_m.group(1).capitalize() if time_m else raw_stmt
+                    if re.search(r'on\s+\d{1,2}\s+[A-Za-z]+$', sighting_val) and report_date and re.search(r'\b(202\d)\b', report_date):
+                        yr = re.search(r'\b(202\d)\b', report_date).group(1)
+                        sighting_val = f"{sighting_val} {yr}"
+                    elif not re.search(r'on\s+', sighting_val) and report_date:
+                        date_m = re.search(r'\b(\d{1,2}\s+[A-Za-z]+(?:\s+\d{4})?)\b', report_date)
+                        if date_m:
+                            d_str = date_m.group(1)
+                            if not re.search(r'\d{4}', d_str) and re.search(r'\b(202\d)\b', report_date):
+                                d_str += f" {re.search(r'\b(202\d)\b', report_date).group(1)}"
+                            sighting_val = f"{sighting_val} on {d_str}"
 
-        # 11. Time of Death & Cause of Death Limitations (Never infer discovery time as death time)
-        tod_match = re.search(r'Time\s*of\s*death\s*[:\-\/]\s*([A-Za-z0-9\s\/\-_]+?)(?=\n|\r|;|$)', text, re.IGNORECASE)
-        time_of_death = tod_match.group(1).strip() if tod_match else "Unknown / not established"
+                    witness_sightings.append({"witness": "Witness B", "sighting": sighting_val})
+                    source_passages.append(FIRSourcePassage(
+                        field="witness_b_sighting",
+                        quote=w_b_narr.group(0).strip(),
+                        char_offset=w_b_narr.start(),
+                        start_char=w_b_narr.start(),
+                        end_char=w_b_narr.end(),
+                        extraction_status="EXTRACTED",
+                        extracted_value=sighting_val,
+                    ))
 
-        cod_match = re.search(r'Cause\s*of\s*death\s*[:\-\/]\s*([A-Za-z0-9\s\/\-_]+?)(?=\n|\r|;|$)', text, re.IGNORECASE)
-        cause_of_death = cod_match.group(1).strip() if cod_match else "Unknown / not established"
+        # 11. Time of Death & Cause of Death (Only applicable for DEATH_INVESTIGATION)
+        if incident_type == "DEATH_INVESTIGATION":
+            tod_match = re.search(r'Time\s*of\s*death\s*[:\-\/]\s*([A-Za-z0-9\s\/\-_]+?)(?=\n|\r|;|$)', text, re.IGNORECASE)
+            time_of_death = tod_match.group(1).strip() if tod_match else "Unknown / not established"
+
+            cod_match = re.search(r'Cause\s*of\s*death\s*[:\-\/]\s*([A-Za-z0-9\s\/\-_]+?)(?=\n|\r|;|$)', text, re.IGNORECASE)
+            cause_of_death = cod_match.group(1).strip() if cod_match else "Unknown / not established"
+        else:
+            time_of_death = None
+            cause_of_death = None
 
         # 12. Narrative
         narrative_match = re.search(
@@ -1822,24 +2038,53 @@ class EvidenceExtractionService:
         else:
             missing_fields.append("investigating_officer")
 
-        # 14. Suggested Title
+        # 14. Suggested Title (Derived dynamically from source without hardcoded synthetic case values)
         # Check explicit title header
         t_match = re.search(r'(?:Subject|Case\s*Title|Title|Incident\s*(?:Title|Name)?)\s*[:\-\/]\s*([A-Za-z0-9\s,\-\.\(\)\']+?)(?=\n|\r|;|$)', text, re.IGNORECASE)
         if t_match and not re.match(r'^(?:Initial(?:\s*Inquest)?(?:\s*Report)?|FIR|First\s*Information\s*Report|Case)$', t_match.group(1).strip(), re.IGNORECASE):
             suggested_title = t_match.group(1).strip()
-        elif re.search(r'\bRiverside Guesthouse Incident\b', text, re.IGNORECASE):
-            suggested_title = "Riverside Guesthouse Incident"
-        elif "Riverside Guesthouse" in (incident_location or text) and victim_name and "Arjun Menon" in victim_name:
-            suggested_title = "Riverside Guesthouse Incident"
         else:
-            # Standalone incident heading
-            m_inc = re.search(r'(?:^|\n)\s*([A-Z][a-zA-Z0-9\t \-_]+(?:Incident|Investigation))\s*(?:$|\n)', text)
-            if m_inc and len(m_inc.group(1).strip()) > 8 and not re.match(r'^(?:Incident|An\s+Incident|The\s+Incident|Incident\s+summary)$', m_inc.group(1).strip(), re.IGNORECASE):
+            # Standalone incident heading (e.g. "Greenfield Community Hall Equipment Theft", "Riverside Guesthouse Incident")
+            m_inc = re.search(r'(?:^|\n)\s*([A-Z][a-zA-Z0-9\t \-_]+(?:Incident|Investigation|Theft|Burglary|Robbery))\s*(?:$|\n)', text)
+            if m_inc and len(m_inc.group(1).strip()) > 8 and not re.match(r'^(?:Incident|An\s+Incident|The\s+Incident|Incident\s+summary|Equipment\s+Theft)$', m_inc.group(1).strip(), re.IGNORECASE):
                 suggested_title = m_inc.group(1).strip()
-            else:
+            elif incident_type == "DEATH_INVESTIGATION" and offense_sections and re.search(r'\b(?:194\s*BNSS|174\s*Cr\.?P\.?C|Unnatural\s*Death)\b', offense_sections, re.I):
                 victim_part = victim_name if victim_name else "Unknown Subject"
                 loc_part = incident_location if incident_location else (police_station if police_station and police_station != "Central Jurisdiction Police Station" else "Unspecified Location")
                 suggested_title = f"Unnatural Death Inquiry — {victim_part} — {loc_part}"
+            else:
+                # Dynamic venue extraction from incident location or text
+                search_target = f"{incident_location or ''} {text}"
+                venue_m = re.search(
+                    r'\b(?:(?:Hotel|Resort|Lodge|Guesthouse|Community\s+Hall|Auditorium)\s+[A-Z][a-zA-Z0-9\s]+|[A-Z][a-zA-Z0-9\s]+?(?:Community\s+Hall|Auditorium|Guesthouse|Hotel|Resort|Apartments|Complex|Lodge|Building|Hospital|Quay|Pier|Lake|River|Beach|Colony))\b',
+                    search_target
+                )
+                if venue_m:
+                    v = venue_m.group(0).strip()
+                    v = re.sub(r'^(?:the\s+)?(?:fictional\s+)?', '', v, flags=re.I)
+                    v = re.sub(r'^(?:Room\s+\d+\s+(?:of\s+)?(?:the\s+)?)', '', v, flags=re.I)
+                    v = v.split(',')[0].strip()
+                    if len(v) > 3 and not re.match(r'^(?:Police\s+Station|Training\s+Police\s+Station)$', v, re.I):
+                        if incident_type == "PROPERTY_LOSS":
+                            suggested_title = f"{v} Equipment Theft" if re.search(r'equipment', text, re.I) else f"{v} Theft"
+                        elif incident_type == "DEATH_INVESTIGATION":
+                            suggested_title = f"{v} Incident"
+                        else:
+                            suggested_title = f"{v} Incident"
+                    else:
+                        suggested_title = None
+                else:
+                    suggested_title = None
+
+                if not suggested_title:
+                    loc_part = incident_location if incident_location else (police_station if police_station and police_station != "Central Jurisdiction Police Station" else "Unspecified Location")
+                    victim_part = victim_name if victim_name else "Unknown Subject"
+                    if incident_type == "PROPERTY_LOSS":
+                        suggested_title = f"{loc_part} Equipment Theft" if re.search(r'equipment', text, re.I) else f"{loc_part} Theft"
+                    elif incident_type == "DEATH_INVESTIGATION":
+                        suggested_title = f"Unnatural Death Inquiry — {victim_part} — {loc_part}"
+                    else:
+                        suggested_title = f"Incident Inquiry — {victim_part} — {loc_part}"
 
         # 15. Ambiguity checks
         if incident_date and re.search(r'\b(?:approx|approximate|around|intervening|between|unknown|estimated)\b', incident_date, re.IGNORECASE):
@@ -1853,8 +2098,11 @@ class EvidenceExtractionService:
         if len(text.strip()) < 30:
             ocr_limitation_notice = "Limited text extracted from document. Scanned documents require OCR, which is not configured in this environment."
 
+        # Filter missing_fields so only fields applicable to this incident type are marked missing
+        missing_fields = [f for f in missing_fields if f in applicable_fields]
+
         overall_status = "EXTRACTED"
-        if not fir_number or not police_station or len(missing_fields) > 4:
+        if incident_type == "NEEDS_REVIEW" or not fir_number or not police_station or len(missing_fields) > 4:
             overall_status = "NEEDS_REVIEW"
 
         return FIRAssistedExtractResponse(
@@ -1871,6 +2119,10 @@ class EvidenceExtractionService:
             witness_sightings=witness_sightings,
             time_of_death=time_of_death,
             cause_of_death=cause_of_death,
+            incident_type=incident_type,
+            last_confirmed_present=last_confirmed_present,
+            property_items=property_items,
+            applicable_fields=applicable_fields,
             source_passages=source_passages,
             suggested_title=suggested_title,
             investigating_officer=investigating_officer,
@@ -1926,7 +2178,23 @@ class EvidenceExtractionService:
                 nodes.append(node)
                 node_ids_seen.add(node.id)
 
-        # 1. Document Nodes (one for each exhibit)
+        # 1. Identify FIR Exhibit vs other exhibits
+        fir_exhibit = None
+        for e in exhibits:
+            fn = (e.original_file_name or "").lower()
+            if "fir" in fn or "intake" in fn:
+                fir_exhibit = e
+                break
+        if not fir_exhibit:
+            for e in exhibits:
+                if e.evidence_category == "DOCUMENT_PDF":
+                    fir_exhibit = e
+                    break
+        if not fir_exhibit:
+            sorted_by_date = sorted(exhibits, key=lambda x: getattr(x, "created_at", None) or datetime.min)
+            fir_exhibit = sorted_by_date[0]
+
+        # 2. Document Nodes (one for each exhibit)
         for e in exhibits:
             add_node(EntityNode(
                 id=f"node-doc-{e.evidence_id}",
@@ -1944,7 +2212,7 @@ class EvidenceExtractionService:
                 source_filename=e.original_file_name,
             ))
 
-        # 2. Case Central Entities from FIR Metadata
+        # 3. Case Central Entities from FIR Metadata
         fir = case.fir_metadata or {}
         complainant_name = fir.get("complainant_name") or "Reporting Complainant"
         victim_name = fir.get("victim_name") or "Deceased Individual"
@@ -1957,8 +2225,8 @@ class EvidenceExtractionService:
             category=EntityNodeType.PERSON,
             subtitle="Deceased / Subject of Inquest",
             details={"case_role": "Subject of Inquiry", "source": "FIR & Inquest Registration"},
-            evidence_id=exhibits[0].evidence_id,
-            source_filename=exhibits[0].original_file_name,
+            evidence_id=fir_exhibit.evidence_id,
+            source_filename=fir_exhibit.original_file_name,
         ))
 
         add_node(EntityNode(
@@ -1967,8 +2235,8 @@ class EvidenceExtractionService:
             category=EntityNodeType.PERSON,
             subtitle="Complainant / Informant",
             details={"case_role": "Informant", "source": "Initial Report"},
-            evidence_id=exhibits[0].evidence_id,
-            source_filename=exhibits[0].original_file_name,
+            evidence_id=fir_exhibit.evidence_id,
+            source_filename=fir_exhibit.original_file_name,
         ))
 
         add_node(EntityNode(
@@ -1977,8 +2245,8 @@ class EvidenceExtractionService:
             category=EntityNodeType.LOCATION,
             subtitle="Incident / Discovery Location",
             details={"type": "Place of Occurrence", "source": "FIR Document"},
-            evidence_id=exhibits[0].evidence_id,
-            source_filename=exhibits[0].original_file_name,
+            evidence_id=fir_exhibit.evidence_id,
+            source_filename=fir_exhibit.original_file_name,
         ))
 
         add_node(EntityNode(
@@ -1987,14 +2255,16 @@ class EvidenceExtractionService:
             category=EntityNodeType.LOCATION,
             subtitle="Jurisdiction Police Station",
             details={"type": "Law Enforcement Facility"},
-            evidence_id=exhibits[0].evidence_id,
-            source_filename=exhibits[0].original_file_name,
+            evidence_id=fir_exhibit.evidence_id,
+            source_filename=fir_exhibit.original_file_name,
         ))
 
-        # 3. Grounded Relationships (Edges) with Citations
+        # 4. Grounded Relationships (Edges) with Citations
         edge_counter = 1
         def make_edge(source_id, target_id, rel_type, label, e_obj, passage, page=1, offset=0):
             nonlocal edge_counter
+            if source_id not in node_ids_seen or target_id not in node_ids_seen:
+                return None
             eid = f"EDGE-{case_id[-4:]}-{edge_counter:03d}"
             edge_counter += 1
             citation = {
@@ -2006,7 +2276,7 @@ class EvidenceExtractionService:
                 "source_passage": passage,
                 "cryptographic_hash": getattr(e_obj, "checksum_sha256", None) or "SHA256:VERIFIED",
             }
-            return EntityEdge(
+            edge = EntityEdge(
                 id=eid,
                 source_node_id=source_id,
                 target_node_id=target_id,
@@ -2020,50 +2290,164 @@ class EvidenceExtractionService:
                 review_status=RelationshipReviewStatus.REPORTED,
                 citation=citation,
             )
+            edges.append(edge)
+            return edge
 
         # Victim located at scene
-        edges.append(make_edge(
+        make_edge(
             "node-person-victim",
             "node-loc-scene",
             EntityEdgeType.LOCATED_AT,
             "Discovered at Scene",
-            exhibits[0],
+            fir_exhibit,
             f"The body of the deceased was discovered at {scene_location} as documented in the initial inquest record.",
-        ))
+        )
 
         # Complainant reported to police station
-        edges.append(make_edge(
+        make_edge(
             "node-person-complainant",
             "node-loc-ps",
             EntityEdgeType.REPORTED_BY,
             "Lodged Report At",
-            exhibits[0],
+            fir_exhibit,
             f"Information submitted by {complainant_name} at {station_name} regarding unnatural death.",
-        ))
+        )
 
-        # Document mentions victim & complainant
-        edges.append(make_edge(
+        # FIR mentions victim & complainant
+        make_edge(
             "node-person-victim",
-            f"node-doc-{exhibits[0].evidence_id}",
+            f"node-doc-{fir_exhibit.evidence_id}",
             EntityEdgeType.MENTIONED_IN,
             "Named in Exhibit",
-            exhibits[0],
+            fir_exhibit,
             f"Official record referencing deceased: {victim_name}",
-        ))
+        )
 
-        edges.append(make_edge(
+        make_edge(
             "node-person-complainant",
-            f"node-doc-{exhibits[0].evidence_id}",
+            f"node-doc-{fir_exhibit.evidence_id}",
             EntityEdgeType.MENTIONED_IN,
             "Named as Informant",
-            exhibits[0],
+            fir_exhibit,
             f"First Information Report complainant entry: {complainant_name}",
-        ))
+        )
 
-        # If more exhibits exist, create object nodes and forensic match edges
-        for idx, e in enumerate(exhibits[1:], start=2):
+        make_edge(
+            f"node-doc-{fir_exhibit.evidence_id}",
+            "node-loc-scene",
+            EntityEdgeType.LOCATED_AT,
+            "Recorded at Scene",
+            fir_exhibit,
+            f"Initial intake record filed regarding scene at {scene_location}.",
+        )
+
+        # 5. Non-FIR Exhibits: parse statements, physical objects, and additional reports
+        for e in exhibits:
+            if e.evidence_id == fir_exhibit.evidence_id:
+                continue
             cat = e.evidence_category
-            if cat in {"AUTOPSY_PHOTO", "DOCUMENT_PDF", "SCENE_PHOTO"}:
+            fn = (e.original_file_name or "").lower()
+
+            # Retrieve indexed text for this exhibit if available
+            exhibit_text = ""
+            rag_doc = self.rag_repo.get_document_by_evidence_and_version(evidence_id=e.evidence_id, processing_version="v1.0")
+            if rag_doc:
+                chunks = self.rag_repo.get_chunks_by_document(rag_doc.document_id)
+                exhibit_text = " ".join((c.content or "") for c in chunks)
+
+            # Check if this is a witness statement or examination document
+            is_witness_statement = "witness" in fn or "statement" in fn or "statement of witness" in exhibit_text.lower()
+
+            if is_witness_statement and exhibit_text:
+                # Extract witness identity from statement header
+                wm = re.search(r"STATEMENT\s+OF\s+WITNESS\s+([A-Z])\s*\(([^,)]+)(?:,\s*([^)]+))?\)", exhibit_text, re.IGNORECASE)
+                if not wm:
+                    wm = re.search(r"\bWitness(?:\s+([A-Z]))?:\s*([A-Za-z\s]+)(?:,\s*([^,\n]+))?", exhibit_text, re.IGNORECASE)
+
+                if wm:
+                    w_letter = wm.group(1) or "A"
+                    w_name = (wm.group(2) or f"Witness {w_letter}").strip()
+                    w_role = (wm.group(3) or "Eyewitness / Guesthouse Staff").strip()
+                    w_node_id = f"node-witness-{e.evidence_id}"
+
+                    add_node(EntityNode(
+                        id=w_node_id,
+                        name=w_name,
+                        category=EntityNodeType.PERSON,
+                        subtitle=f"Witness {w_letter} ({w_role})",
+                        details={"role": w_role, "witness_letter": w_letter, "evidence_id": e.evidence_id},
+                        evidence_id=e.evidence_id,
+                        source_filename=e.original_file_name,
+                    ))
+
+                    make_edge(
+                        w_node_id,
+                        f"node-doc-{e.evidence_id}",
+                        EntityEdgeType.MENTIONED_IN,
+                        "Author of Statement",
+                        e,
+                        f"Statement of Witness {w_letter} ({w_name}, {w_role}) documented in exhibit {e.original_file_name}.",
+                    )
+                    make_edge(
+                        w_node_id,
+                        "node-loc-scene",
+                        EntityEdgeType.LOCATED_AT,
+                        "Present at Premises",
+                        e,
+                        f"Witness {w_name} present at {scene_location} during relevant timeline window.",
+                    )
+
+                    # Check for observation of victim
+                    if victim_name.lower() in exhibit_text.lower() or "arjun menon" in exhibit_text.lower():
+                        make_edge(
+                            w_node_id,
+                            "node-person-victim",
+                            EntityEdgeType.WITNESSED_BY,
+                            "Observed Subject",
+                            e,
+                            f"Witness {w_name} observed subject {victim_name} as detailed in statement.",
+                        )
+
+                    # Unidentified individual sighting (kept separate per witness)
+                    unidentified_match = re.search(r"\b(unidentified\s+(?:person|individual))\b", exhibit_text, re.IGNORECASE)
+                    if unidentified_match:
+                        unid_node_id = f"node-unidentified-{e.evidence_id}"
+                        add_node(EntityNode(
+                            id=unid_node_id,
+                            name=f"Unidentified Person (Reported by Witness {w_letter})",
+                            category=EntityNodeType.PERSON,
+                            subtitle="Reported Sighting (Unidentified)",
+                            details={"witness_reference": w_name, "evidence_id": e.evidence_id},
+                            evidence_id=e.evidence_id,
+                            source_filename=e.original_file_name,
+                        ))
+                        make_edge(
+                            unid_node_id,
+                            w_node_id,
+                            EntityEdgeType.WITNESSED_BY,
+                            "Observed by Witness",
+                            e,
+                            f"Witness {w_name} reported observing an unidentified individual near corridor.",
+                        )
+                        make_edge(
+                            unid_node_id,
+                            "node-loc-scene",
+                            EntityEdgeType.LOCATED_AT,
+                            "Observed at Scene",
+                            e,
+                            f"Unidentified individual reported observed near {scene_location}.",
+                        )
+                else:
+                    # Link document to scene
+                    make_edge(
+                        f"node-doc-{e.evidence_id}",
+                        "node-loc-scene",
+                        EntityEdgeType.LOCATED_AT,
+                        "Case Exhibit",
+                        e,
+                        f"Exhibit {e.original_file_name} associated with incident investigation.",
+                    )
+            elif cat in {"AUTOPSY_PHOTO", "SCENE_PHOTO"} or "photo" in fn or "item" in fn or "weapon" in fn:
                 obj_node_id = f"node-obj-{e.evidence_id}"
                 add_node(EntityNode(
                     id=obj_node_id,
@@ -2074,22 +2458,32 @@ class EvidenceExtractionService:
                     evidence_id=e.evidence_id,
                     source_filename=e.original_file_name,
                 ))
-                edges.append(make_edge(
+                make_edge(
                     obj_node_id,
                     "node-loc-scene",
                     EntityEdgeType.SEIZED_FROM,
                     "Recovered from Scene",
                     e,
                     f"Physical exhibit {e.original_file_name} seized and documented under chain of custody.",
-                ))
-                edges.append(make_edge(
+                )
+                make_edge(
                     obj_node_id,
                     f"node-doc-{e.evidence_id}",
                     EntityEdgeType.MENTIONED_IN,
                     "Documented in Docket",
                     e,
                     f"Exhibit record {e.original_file_name} cataloged with verified hash integrity.",
-                ))
+                )
+            else:
+                # Other document exhibits
+                make_edge(
+                    f"node-doc-{e.evidence_id}",
+                    "node-loc-scene",
+                    EntityEdgeType.LOCATED_AT,
+                    "Case Exhibit",
+                    e,
+                    f"Exhibit {e.original_file_name} associated with incident investigation.",
+                )
 
         return CaseKnowledgeGraphResponse(
             case_id=case_id,

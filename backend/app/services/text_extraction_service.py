@@ -217,30 +217,23 @@ class TextExtractionService:
         evidence: Evidence,
         raw_bytes: bytes,
     ) -> ExtractedDocument:
-        """
-        Performs in-memory extraction based on MIME type or category.
-        """
         effective_mime = (
             evidence.detected_mime_type
             or evidence.declared_mime_type
             or "application/octet-stream"
         ).lower()
 
-        is_pdf = (
-            effective_mime == "application/pdf"
-            or evidence.evidence_category in ("DOCUMENT_PDF", "DOCUMENT", "MEDICAL_REPORT")
-            or evidence.original_file_name.lower().endswith(".pdf")
-        )
+        # Determine actual file format using magic bytes first, then extension and MIME
+        is_pdf_bytes = raw_bytes.startswith(b"%PDF")
+        ext = os.path.splitext(evidence.original_file_name.lower())[1]
 
-        is_plaintext = (
-            effective_mime in ("text/plain", "text/markdown", "text/csv")
-            or evidence.evidence_category == "CDR_SPREADSHEET"
-            or evidence.original_file_name.lower().endswith((".txt", ".md", ".csv"))
-        )
+        is_plaintext_ext = ext in (".txt", ".md", ".csv", ".log", ".json")
+        is_plaintext_mime = effective_mime.startswith("text/") or effective_mime in ("application/json", "application/csv")
 
-        if is_pdf:
+        # A file is plaintext if it does not have PDF magic bytes and has plaintext extension or MIME
+        if is_pdf_bytes or (ext == ".pdf" and not is_plaintext_ext):
             return self._extract_pdf_text(case, evidence, raw_bytes, effective_mime)
-        elif is_plaintext:
+        elif is_plaintext_ext or is_plaintext_mime:
             return self._extract_plaintext(case, evidence, raw_bytes, effective_mime)
         else:
             raise UnsupportedDocumentFormatException(
@@ -309,11 +302,18 @@ class TextExtractionService:
     ) -> ExtractedDocument:
         """Extracts text from plain text or tabular byte streams."""
         try:
-            # Attempt UTF-8 decoding with fallback to Latin-1
+            # Handle UTF-8 BOM and text encodings safely
+            payload_bytes = raw_bytes
+            if payload_bytes.startswith(b"\xef\xbb\xbf"):
+                payload_bytes = payload_bytes[3:]
+
             try:
-                decoded_text = raw_bytes.decode("utf-8")
+                decoded_text = payload_bytes.decode("utf-8")
             except UnicodeDecodeError:
-                decoded_text = raw_bytes.decode("latin-1")
+                try:
+                    decoded_text = payload_bytes.decode("latin-1")
+                except Exception as decode_err:
+                    raise TextExtractionException(f"Failed to decode text document encoding: {decode_err}")
 
             cleaned_text = decoded_text.strip()
             total_chars = len(cleaned_text)

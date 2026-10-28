@@ -8,6 +8,7 @@ ENV/
 __pycache__/
 *.py[cod]
 *$py.class
+*.dll
 
 # Pytest & Coverage
 .pytest_cache/
@@ -21,10 +22,25 @@ htmlcov/
 *.sqlite3
 sakshi_cases.db
 /sakshi/workspaces/
+sakshi/workspaces/
+**/workspaces/
+*.enc
+.objlock/
+**/.objlock/
+.worm/
+**/.worm/
+.keystore/
+**/.keystore/
+serviceAccountKey*.json
+*firebase-admin*.json
 
 # Environment & credentials
 .env
-.env.local
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+!backend/.env.example
 **/Config.local.json
 *.pem
 *.key
@@ -40,6 +56,8 @@ desktop.ini
 # Dependencies & Build
 node_modules/
 */node_modules/
+dist/
+build/
 
 # Test temporary artifacts
 .test-tmp/
@@ -52,4 +70,9 @@ node_modules/
 # Local database backups
 backups/
 **/.tmh/
-*.dll
+
+# Editor / IDE directories
+.vscode/
+.idea/
+*.swp
+*.bak

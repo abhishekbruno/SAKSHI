@@ -620,8 +620,23 @@ class FactReviewRequest(BaseModel):
     """Investigator submission to confirm, correct, or dispute an extracted forensic claim."""
     decision: FactReviewDecision = Field(..., description="Review outcome: CONFIRMED, CORRECTED, FLAGGED, REJECTED")
     corrected_text: Optional[str] = Field(None, description="Investigator-corrected fact statement if amending")
-    reason: str = Field(..., min_length=3, max_length=1000, description="Mandatory forensic rationale for the decision")
+    reason: Optional[str] = Field(None, max_length=1000, description="Forensic rationale for the decision (optional for CONFIRMED)")
     notes: Optional[str] = Field(None, max_length=1000, description="Additional investigator notes")
+
+    @model_validator(mode="after")
+    def validate_review_decision_fields(self) -> "FactReviewRequest":
+        if self.decision in (FactReviewDecision.FLAGGED, FactReviewDecision.REJECTED):
+            if not self.reason or len(self.reason.strip()) < 3:
+                raise ValueError(f"A rationale/reason of at least 3 characters is required when {self.decision.value.lower()} a fact.")
+        elif self.decision == FactReviewDecision.CORRECTED:
+            if not self.corrected_text or len(self.corrected_text.strip()) < 3:
+                raise ValueError("Corrected statement text (at least 3 characters) is required when amending a fact.")
+            if not self.reason or len(self.reason.strip()) < 3:
+                self.reason = f"Corrected fact statement: {self.corrected_text.strip()[:60]}"
+        elif self.decision == FactReviewDecision.CONFIRMED:
+            if not self.reason or len(self.reason.strip()) < 3:
+                self.reason = "Confirmed source support by investigating officer."
+        return self
 
 
 class FactReviewResponse(BaseModel):
