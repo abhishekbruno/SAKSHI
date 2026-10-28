@@ -152,3 +152,15 @@ def get_evidence_intelligence_service(db: Session = Depends(get_db)):
     return EvidenceIntelligenceService(db)
 
 
+
+
+def get_pipeline_repository(db: Session = Depends(get_db)):
+    """Dependency injecting PipelineRepository wired with current DB session."""
+    from app.repositories.pipeline_repository import PipelineRepository
+    return PipelineRepository(db)
+
+
+def get_investigation_pipeline_orchestrator(db: Session = Depends(get_db)):
+    """Dependency injecting the Master Investigation Pipeline Orchestrator."""
+    from app.services.investigation_pipeline_orchestrator import InvestigationPipelineOrchestrator
+    return InvestigationPipelineOrchestrator(db)

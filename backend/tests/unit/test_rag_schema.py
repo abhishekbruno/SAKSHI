@@ -328,7 +328,7 @@ def test_alembic_configuration_and_revisions():
     # Check heads
     heads = script.get_heads()
     assert len(heads) == 1
-    assert heads[0] in {"002_create_rag_tables", "003_iam_officers"}
+    assert heads[0] in {"002_create_rag_tables", "003_iam_officers", "004_pipeline_runs_and_reports"}
 
     # Check revision sequence
     rev2 = script.get_revision("002_create_rag_tables")

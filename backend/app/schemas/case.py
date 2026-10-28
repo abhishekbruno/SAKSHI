@@ -20,6 +20,9 @@ class FIRMetadata(BaseModel):
     complainant_name: Optional[str] = Field(None, description="Name of complainant / reporting person")
     incident_type: Optional[str] = Field(None, description="Incident classification: DEATH_INVESTIGATION, PROPERTY_LOSS, or NEEDS_REVIEW")
     last_confirmed_present: Optional[str] = Field(None, description="Last confirmed present timestamp")
+    discovery_time: Optional[str] = Field(None, description="Time of discovery or reporting")
+    time_of_death: Optional[str] = Field(None, description="Estimated or reported time of death")
+    cause_of_death: Optional[str] = Field(None, description="Reported or initial cause of death")
     property_items: Optional[str] = Field(None, description="Stolen/affected property items")
     additional_attributes: Optional[Dict[str, Any]] = Field(default_factory=dict, description="Flexible legal/procedural metadata")
 

@@ -63,3 +63,4 @@ jobs:
         run: |
           node frontend/test_login_verification.js
           node frontend/test_fir_ingestion_regression.js
+

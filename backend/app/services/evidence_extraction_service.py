@@ -1308,72 +1308,153 @@ class EvidenceExtractionService:
         # Note: Do not fabricate contradictions on empty or single exhibit cases.
 
         # 3. Section C: What remains unknown (Evidence Gaps)
-        has_autopsy = any(
-            e.evidence_category in ("AUTOPSY_PHOTO", "MEDICAL_REPORT") or (e.description and "autopsy" in e.description.lower())
-            for e in exhibits
-        )
-        has_cdr = any(e.evidence_category == "CDR_SPREADSHEET" for e in exhibits)
-        has_scene = any(e.evidence_category == "SCENE_PHOTO" for e in exhibits)
+        fir_meta = case.fir_metadata if isinstance(case.fir_metadata, dict) else {}
+        incident_type = fir_meta.get("incident_type")
+        if not incident_type:
+            title_lower = (case.title or "").lower()
+            if any(k in title_lower for k in ("theft", "property", "burglary", "stolen", "loss")):
+                incident_type = "PROPERTY_LOSS"
+            else:
+                incident_type = "DEATH_INVESTIGATION"
 
-        if not has_autopsy:
-            investigation_gaps.append({
-                "gap_id": "GAP-01",
-                "priority": "HIGH",
-                "missing": "Final Post-Mortem & Chemical Viscera Analysis Report",
-                "why_it_matters": "Essential to establish definitive physiological cause of death and rule out intoxication or poisoning under Section 194 BNSS.",
-                "potential_custodian": "State Forensic Science Laboratory (Toxicology Division)",
-                "recommended_action": "Issue formal reminder for chemical examination certificate.",
-            })
-        if not has_cdr:
-            investigation_gaps.append({
-                "gap_id": "GAP-02",
-                "priority": "MEDIUM",
-                "missing": "Telecom Cellular Detail Records (CDR) & Tower Dumps",
-                "why_it_matters": "Necessary to corroborate reported physical presence and communication timeline.",
-                "potential_custodian": "Telecom Service Provider Nodal Officer",
-                "recommended_action": "Submit formal Section 94 BNSS / Section 91 CrPC requisition.",
-            })
-        if not has_scene:
-            investigation_gaps.append({
-                "gap_id": "GAP-03",
-                "priority": "LOW",
-                "missing": "Detailed Crime Scene Inquest Photography Set",
-                "why_it_matters": "Preserves physical layout, point of entry, and evidence position relative to the deceased.",
-                "potential_custodian": "District Mobile Forensic Science Unit (MFSU)",
-                "recommended_action": "Retrieve and catalog high-resolution scene photography set.",
-            })
+        if incident_type == "PROPERTY_LOSS":
+            has_cctv = any(
+                e.evidence_category in ("VIDEO_RECORDING", "SCENE_PHOTO") or "cctv" in (e.original_file_name or "").lower()
+                for e in exhibits
+            )
+            has_access_log = any(
+                "log" in (e.original_file_name or "").lower() or "register" in (e.original_file_name or "").lower()
+                for e in exhibits
+            )
+            has_invoice = any(
+                "invoice" in (e.original_file_name or "").lower() or "inventory" in (e.original_file_name or "").lower()
+                for e in exhibits
+            )
+
+            if not has_access_log:
+                investigation_gaps.append({
+                    "gap_id": "GAP-01",
+                    "priority": "HIGH",
+                    "missing": "Facility Key Register & Physical Access Logs",
+                    "why_it_matters": "Essential to identify authorized personnel who accessed or unlocked the storage area bounding the reported loss window.",
+                    "potential_custodian": "Premises Management / Administrative Security In-Charge",
+                    "recommended_action": "Requisition original key issuance register and security staff roster for the overnight interval.",
+                })
+            if not has_cctv:
+                investigation_gaps.append({
+                    "gap_id": "GAP-02",
+                    "priority": "HIGH",
+                    "missing": "Corridor and Entry Point CCTV Surveillance Recordings",
+                    "why_it_matters": "Critical to verify movement of individuals carrying bags or equipment near the storage room during the 18:00 to 08:15 interval.",
+                    "potential_custodian": "Facility Security Office / CCTV DVR Custodian",
+                    "recommended_action": "Seize and forensically preserve DVR footage of all entry and exit corridors.",
+                })
+            if not has_invoice:
+                investigation_gaps.append({
+                    "gap_id": "GAP-03",
+                    "priority": "MEDIUM",
+                    "missing": "Equipment Purchase Invoices & Serial Number Catalog",
+                    "why_it_matters": "Required to establish indisputable legal ownership and circulate precise device serial numbers for asset recovery.",
+                    "potential_custodian": "Complainant / Purchasing Department",
+                    "recommended_action": "Submit formal request to complainant for serial number certificates and original purchase bills.",
+                })
+        else:
+            has_autopsy = any(
+                e.evidence_category in ("AUTOPSY_PHOTO", "MEDICAL_REPORT") or (e.description and "autopsy" in e.description.lower())
+                for e in exhibits
+            )
+            has_cdr = any(e.evidence_category == "CDR_SPREADSHEET" for e in exhibits)
+            has_scene = any(e.evidence_category == "SCENE_PHOTO" for e in exhibits)
+
+            if not has_autopsy:
+                investigation_gaps.append({
+                    "gap_id": "GAP-01",
+                    "priority": "HIGH",
+                    "missing": "Final Post-Mortem & Chemical Viscera Analysis Report",
+                    "why_it_matters": "Essential to establish definitive physiological cause of death and rule out intoxication or poisoning under Section 194 BNSS.",
+                    "potential_custodian": "State Forensic Science Laboratory (Toxicology Division)",
+                    "recommended_action": "Issue formal reminder for chemical examination certificate.",
+                })
+            if not has_cdr:
+                investigation_gaps.append({
+                    "gap_id": "GAP-02",
+                    "priority": "MEDIUM",
+                    "missing": "Telecom Cellular Detail Records (CDR) & Tower Dumps",
+                    "why_it_matters": "Necessary to corroborate reported physical presence and communication timeline.",
+                    "potential_custodian": "Telecom Service Provider Nodal Officer",
+                    "recommended_action": "Submit formal Section 94 BNSS / Section 91 CrPC requisition.",
+                })
+            if not has_scene:
+                investigation_gaps.append({
+                    "gap_id": "GAP-03",
+                    "priority": "LOW",
+                    "missing": "Detailed Crime Scene Inquest Photography Set",
+                    "why_it_matters": "Preserves physical layout, point of entry, and evidence position relative to the deceased.",
+                    "potential_custodian": "District Mobile Forensic Science Unit (MFSU)",
+                    "recommended_action": "Retrieve and catalog high-resolution scene photography set.",
+                })
 
         # 4. Section D: Candidate Scenarios (strictly labeled as hypotheses)
         # Never rank or accuse suspects; ground scenarios purely in physical vs reported sequence
         if len(exhibits) >= 1:
-            candidate_scenarios.append(
-                CandidateScenarioItem(
-                    scenario_id="SCENARIO-01",
-                    title="Scenario 1: Sequence Aligned with Direct Physical Evidence",
-                    hypothesis_disclaimer="Candidate Investigative Hypothesis — Not Established Fact",
-                    plain_language_description="Events unfolded strictly according to timestamped physical exhibits and forensic custody logs.",
-                    supporting_evidence=[e.original_file_name for e in exhibits[:3]],
-                    conflicting_evidence=[],
-                    assumptions=["Physical timestamps and seizure records accurately represent event sequence."],
-                    missing_information=["Chemical examiner analysis pending confirmation."],
-                    confidence_limitations="Confidence is limited by pending toxicological and digital forensics reports.",
-                    distinguishing_evidence_needed="Final post-mortem report and forensic toxicology certificate.",
+            if incident_type == "PROPERTY_LOSS":
+                candidate_scenarios.append(
+                    CandidateScenarioItem(
+                        scenario_id="SCENARIO-01",
+                        title="Scenario 1: Equipment Removal During Overnight Unlocked or Unsupervised Window",
+                        hypothesis_disclaimer="Candidate Investigative Hypothesis — Not Established Fact",
+                        plain_language_description="Property was removed from the storage facility during the window between the verified 18:00 IST inventory and the 08:15 IST discovery.",
+                        supporting_evidence=[e.original_file_name for e in exhibits[:3]],
+                        conflicting_evidence=[],
+                        assumptions=["Inventory log reflects accurate presence at 18:00 IST."],
+                        missing_information=["Ingress/egress surveillance footage and key custody logs pending retrieval."],
+                        confidence_limitations="Exact occurrence timestamp is not fixed; observation reports are approximate.",
+                        distinguishing_evidence_needed="DVR surveillance recordings and verified key handover records.",
+                    )
                 )
-            )
-            candidate_scenarios.append(
-                CandidateScenarioItem(
-                    scenario_id="SCENARIO-02",
-                    title="Scenario 2: Sequence Aligned with Reported Third-Party Observations",
-                    hypothesis_disclaimer="Candidate Investigative Hypothesis — Not Established Fact",
-                    plain_language_description="Events unfolded according to initial statements, which may reflect perceptual delays or clock variances.",
-                    supporting_evidence=[exhibits[0].original_file_name],
-                    conflicting_evidence=[],
-                    assumptions=["Reporting witnesses gave accurate time estimates without synchronized clocks."],
-                    missing_information=["CCTV corridor surveillance footage timestamp synchronization."],
-                    confidence_limitations="Oral statements carry human memory variance (+/- 15 minutes).",
-                    distinguishing_evidence_needed="NTP-synchronized digital timestamps from cellular tower logs.",
+                candidate_scenarios.append(
+                    CandidateScenarioItem(
+                        scenario_id="SCENARIO-02",
+                        title="Scenario 2: Sequence Aligned with Reported Eyewitness Movement",
+                        hypothesis_disclaimer="Candidate Investigative Hypothesis — Not Established Fact",
+                        plain_language_description="Reported observations near the storage room around 19:10-19:20 IST represent a potential window of interest requiring independent corroboration.",
+                        supporting_evidence=[exhibits[0].original_file_name],
+                        conflicting_evidence=[],
+                        assumptions=["Witness time estimates carry normal human variance without synchronized time stamps."],
+                        missing_information=["Confirmation whether observed bag was associated with the missing audio equipment."],
+                        confidence_limitations="Witness did not observe bag contents or entry into the storage room.",
+                        distinguishing_evidence_needed="Forensic examination of lock tampering and identification of observed person.",
+                    )
                 )
-            )
+            else:
+                candidate_scenarios.append(
+                    CandidateScenarioItem(
+                        scenario_id="SCENARIO-01",
+                        title="Scenario 1: Sequence Aligned with Direct Physical Evidence",
+                        hypothesis_disclaimer="Candidate Investigative Hypothesis — Not Established Fact",
+                        plain_language_description="Events unfolded strictly according to timestamped physical exhibits and forensic custody logs.",
+                        supporting_evidence=[e.original_file_name for e in exhibits[:3]],
+                        conflicting_evidence=[],
+                        assumptions=["Physical timestamps and seizure records accurately represent event sequence."],
+                        missing_information=["Chemical examiner analysis pending confirmation."],
+                        confidence_limitations="Confidence is limited by pending toxicological and digital forensics reports.",
+                        distinguishing_evidence_needed="Final post-mortem report and forensic toxicology certificate.",
+                    )
+                )
+                candidate_scenarios.append(
+                    CandidateScenarioItem(
+                        scenario_id="SCENARIO-02",
+                        title="Scenario 2: Sequence Aligned with Reported Third-Party Observations",
+                        hypothesis_disclaimer="Candidate Investigative Hypothesis — Not Established Fact",
+                        plain_language_description="Events unfolded according to initial statements, which may reflect perceptual delays or clock variances.",
+                        supporting_evidence=[exhibits[0].original_file_name],
+                        conflicting_evidence=[],
+                        assumptions=["Reporting witnesses gave accurate time estimates without synchronized clocks."],
+                        missing_information=["CCTV corridor surveillance footage timestamp synchronization."],
+                        confidence_limitations="Oral statements carry human memory variance (+/- 15 minutes).",
+                        distinguishing_evidence_needed="NTP-synchronized digital timestamps from cellular tower logs.",
+                    )
+                )
 
         return InvestigationAnalysisResponse(
             case_id=case_id,

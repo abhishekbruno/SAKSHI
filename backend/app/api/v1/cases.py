@@ -3,6 +3,7 @@ Case Management REST API Endpoints (MOD-01).
 Version: v1 (/api/v1/cases)
 """
 import base64
+from datetime import datetime, timezone
 import io
 from typing import Optional
 from fastapi import APIRouter, Depends, Query, status, File, Form, UploadFile, Request
@@ -14,14 +15,19 @@ from app.api.deps import (
     get_evidence_extraction_service,
     get_evidence_intelligence_service,
     get_evidence_pipeline_orchestrator,
+    get_investigation_pipeline_orchestrator,
+    get_pipeline_repository,
 )
 from app.core.security import AuthenticatedInvestigator
-from app.core.errors import InvalidCaseDataException
+from app.core.errors import InvalidCaseDataException, CaseNotFoundException
+from app.core.logging import log_event
 from app.services.case_service import CaseService
 from app.services.evidence_extraction_service import EvidenceExtractionService
 from app.services.evidence_intelligence_service import EvidenceIntelligenceService
 from app.services.evidence_pipeline_orchestrator import EvidencePipelineOrchestrator
+from app.services.investigation_pipeline_orchestrator import InvestigationPipelineOrchestrator
 from app.repositories.evidence_repository import EvidenceRepository
+from app.repositories.pipeline_repository import PipelineRepository
 from app.schemas.intelligence import (
     SearchFilterType,
     UnifiedSearchResponse,
@@ -57,6 +63,13 @@ from app.schemas.evidence import (
     EvidenceCategory,
     CaseRAGAskRequest,
     CaseRAGAskResponse,
+)
+from app.schemas.pipeline import (
+    AutoRegisterCaseResponse,
+    CaseReportResponse,
+    CaseReportReviewRequest,
+    CaseReportReviewResponse,
+    PipelineRunResponse,
 )
 from app.schemas.rag import RAGSearchRequest, RAGSearchResponse
 
@@ -748,3 +761,169 @@ def ask_evidence_intelligence(
 
 
 
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# End-to-End Automated Investigation Pipeline Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/auto-register",
+    response_model=AutoRegisterCaseResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Fully automated FIR intake, case registration, and pipeline execution",
+)
+async def auto_register_case(
+    request: Request,
+    file: Optional[UploadFile] = File(None, description="Uploaded FIR document (PDF or text)"),
+    fir_text: Optional[str] = Form(None, description="Pasted FIR text content"),
+    fir_raw_text: Optional[str] = Form(None, description="Pasted FIR text content (alias)"),
+    title: Optional[str] = Form(None, description="Optional manual case title override"),
+    assigned_io_id: Optional[str] = Form(None, description="Optional assigned IO badge override"),
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    orchestrator: InvestigationPipelineOrchestrator = Depends(get_investigation_pipeline_orchestrator),
+) -> AutoRegisterCaseResponse:
+    """
+    Target Automated Workflow:
+    Upload FIR -> Register Case -> Ingest Evidence -> Security Gates -> Index ->
+    Extract Facts -> Construct Timeline & Graph -> Compare Statements -> Generate Preliminary Report.
+    """
+    file_payload = None
+    filename = None
+    raw_text = fir_raw_text or fir_text
+
+    content_type = request.headers.get("content-type", "").lower()
+    if "application/json" in content_type:
+        try:
+            body = await request.json()
+            raw_text = body.get("fir_raw_text") or body.get("raw_text") or body.get("fir_text") or raw_text
+            filename = body.get("fir_filename") or body.get("filename") or filename or "FIR_document.txt"
+            b64 = body.get("fir_file_b64") or body.get("file_b64")
+            if b64:
+                file_payload = base64.b64decode(b64)
+            title = body.get("title") or title
+            assigned_io_id = body.get("assigned_io_id") or assigned_io_id
+        except Exception:
+            pass
+    elif "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+        try:
+            form = await request.form()
+            raw_text = form.get("fir_raw_text") or form.get("fir_text") or form.get("raw_text") or raw_text
+            title = form.get("title") or title
+            assigned_io_id = form.get("assigned_io_id") or assigned_io_id
+            if "file" in form and form["file"]:
+                f = form["file"]
+                if hasattr(f, "read"):
+                    file_payload = await f.read()
+                    filename = getattr(f, "filename", "FIR_document.pdf")
+        except Exception:
+            pass
+
+    if file and not file_payload:
+        filename = file.filename or "FIR_document.pdf"
+        file_payload = await file.read()
+
+    return orchestrator.auto_register_and_process(
+        investigator=investigator,
+        file_payload=file_payload,
+        original_filename=filename,
+        fir_text=raw_text,
+        title_override=title,
+        assigned_io_override=assigned_io_id,
+    )
+
+
+@router.post(
+    "/{case_id}/pipeline/run",
+    response_model=PipelineRunResponse,
+    summary="Run or refresh the end-to-end investigation pipeline on a case",
+)
+def run_case_pipeline(
+    case_id: str,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    orchestrator: InvestigationPipelineOrchestrator = Depends(get_investigation_pipeline_orchestrator),
+) -> PipelineRunResponse:
+    return orchestrator.run_case_investigation_pipeline(
+        case_id=case_id,
+        investigator=investigator,
+    )
+
+
+@router.get(
+    "/{case_id}/pipeline/status",
+    response_model=Optional[PipelineRunResponse],
+    summary="Retrieve current pipeline run status and stage execution details",
+)
+def get_pipeline_status(
+    case_id: str,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    orchestrator: InvestigationPipelineOrchestrator = Depends(get_investigation_pipeline_orchestrator),
+) -> Optional[PipelineRunResponse]:
+    return orchestrator.get_latest_pipeline_status(
+        case_id=case_id,
+        investigator=investigator,
+    )
+
+
+@router.get(
+    "/{case_id}/report",
+    response_model=CaseReportResponse,
+    summary="Retrieve the preliminary or final investigation report with citations",
+)
+def get_case_report(
+    case_id: str,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    orchestrator: InvestigationPipelineOrchestrator = Depends(get_investigation_pipeline_orchestrator),
+) -> CaseReportResponse:
+    report = orchestrator.get_case_report(
+        case_id=case_id,
+        investigator=investigator,
+    )
+    if not report:
+        raise InvalidCaseDataException(f"Preliminary report could not be compiled for case '{case_id}'.")
+    return report
+
+
+@router.post(
+    "/{case_id}/report/review",
+    response_model=CaseReportReviewResponse,
+    summary="Submit investigator review endorsement or approval on a case report",
+)
+def review_case_report(
+    case_id: str,
+    payload: CaseReportReviewRequest,
+    investigator: AuthenticatedInvestigator = Depends(get_current_investigator),
+    case_service: CaseService = Depends(get_case_service),
+    pipeline_repo: PipelineRepository = Depends(get_pipeline_repository),
+) -> CaseReportReviewResponse:
+    case = case_service.repo.get_by_case_id(case_id)
+    if not case:
+        raise CaseNotFoundException(case_id)
+    case_service.authz.check_can_modify_case(investigator, case)
+
+    report = pipeline_repo.get_latest_case_report(case_id)
+    if not report:
+        raise InvalidCaseDataException(f"No report found for case '{case_id}'.")
+
+    report.approval_status = payload.decision
+    report.approved_by = investigator.investigator_id
+    report.approved_at = datetime.now(timezone.utc)
+    report.review_notes = payload.notes
+    pipeline_repo.update_case_report(report)
+
+    log_event(
+        event_type="CASE_REPORT_REVIEW",
+        message=f"Investigator '{investigator.investigator_id}' updated report '{report.report_id}' approval status to '{payload.decision}'",
+        case_id=case_id,
+        investigator_id=investigator.investigator_id,
+        extra_data={"decision": payload.decision, "report_id": report.report_id, "notes": payload.notes},
+    )
+
+    return CaseReportReviewResponse(
+        report_id=report.report_id,
+        case_id=case_id,
+        approval_status=payload.decision,
+        approved_by=investigator.investigator_id,
+        approved_at=report.approved_at,
+        message=f"Case report review recorded successfully as {payload.decision}.",
+    )

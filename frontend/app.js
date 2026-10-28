@@ -493,6 +493,48 @@ const Api = {
     return this.handleResponse(res, "Extracting candidate FIR details");
   },
 
+  async autoRegisterCase(formData) {
+    const headers = this.getHeaders();
+    delete headers['Content-Type'];
+    const res = await fetch(`${API_BASE}/cases/auto-register`, {
+      method: 'POST',
+      headers: headers,
+      body: formData
+    });
+    return this.handleResponse(res, 'Executing automated investigation pipeline');
+  },
+
+  async getCasePipelineStatus(caseId) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/pipeline/status`, {
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, 'Loading pipeline status');
+  },
+
+  async runCasePipeline(caseId) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/pipeline/run`, {
+      method: 'POST',
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, 'Refreshing investigation pipeline');
+  },
+
+  async getCaseReport(caseId) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/report`, {
+      headers: this.getHeaders()
+    });
+    return this.handleResponse(res, 'Loading preliminary case report');
+  },
+
+  async reviewCaseReport(caseId, payload) {
+    const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/report/review`, {
+      method: 'POST',
+      headers: this.getHeaders(),
+      body: JSON.stringify(payload)
+    });
+    return this.handleResponse(res, 'Submitting report review');
+  },
+
   async createCaseFIRAssisted(payload) {
     const res = await fetch(`${API_BASE}/cases/fir-assisted`, {
       method: "POST",
@@ -2542,16 +2584,45 @@ const ScreenCases = {
     let activeMode = "manual";
     const bodyHtml = `
       <div class="modal-tabs">
-        <button type="button" class="modal-tab-btn active" id="tabManualMode" onclick="ScreenCases.switchModalTab('manual')">
-          📝 Manual Registration (Method A)
+        <button type="button" class="modal-tab-btn active" id="tabAutoMode" onclick="ScreenCases.switchModalTab('auto')">
+          ⚡ Automatic Investigation Pipeline (1-Click)
         </button>
         <button type="button" class="modal-tab-btn" id="tabFirMode" onclick="ScreenCases.switchModalTab('fir')">
           📄 FIR-Assisted Ingestion (Method B)
         </button>
+        <button type="button" class="modal-tab-btn" id="tabManualMode" onclick="ScreenCases.switchModalTab('manual')">
+          📝 Manual Registration (Method A)
+        </button>
+      </div>
+
+      <!-- METHOD AUTO: AUTOMATIC PIPELINE -->
+      <div id="sectionAutoRegistration">
+        <div style="background: rgba(37, 99, 235, 0.08); border-left: 3px solid var(--primary); padding: 12px 14px; border-radius: var(--radius-sm); margin-bottom: 14px; font-size: 0.85rem; color: var(--text-main);">
+          <strong>⚡ Autonomous End-to-End Investigation Flow:</strong><br>
+          Upload your FIR document (PDF or plaintext). SAKSHI automatically classifies the incident (Property Loss vs Death Investigation), registers the case, executes dual-hash WORM object locking, extracts facts & entities, builds the knowledge graph & timeline, compares witness statements, and compiles a source-cited Preliminary Investigation Report without requiring routine field-by-field confirmations.
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" style="font-weight: 600;">Upload FIR Document (PDF or Plaintext)</label>
+          <input type="file" id="inpAutoFirFile" class="form-input" accept=".pdf,.txt,.md,.csv" onchange="ScreenCases.handleAutoFirFileSelect(this)" />
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" style="font-weight: 600;">Or Paste FIR / Inquest Text Content</label>
+          <textarea id="inpAutoFirText" class="form-input" rows="4" placeholder="Paste First Information Report text or initial inquest notes here..."></textarea>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Optional Case Title Override</label>
+          <input type="text" id="inpAutoCaseTitle" class="form-input" placeholder="Leave empty for intelligent automatic title derivation">
+        </div>
+
+        <!-- Real-time pipeline status container -->
+        <div id="autoPipelineProgressContainer" style="display: none; margin-top: 14px;"></div>
       </div>
 
       <!-- METHOD A: MANUAL REGISTRATION -->
-      <div id="sectionManualRegistration">
+      <div id="sectionManualRegistration" style="display: none;">
         <form id="newCaseForm">
           <div class="form-group">
             <label class="form-label" for="inpCaseTitle">Case Title / Incident Description *</label>
@@ -2627,16 +2698,21 @@ const ScreenCases = {
     UI.openModal("Register New Case Inquiry", bodyHtml, footerHtml);
 
     document.getElementById("btnSubmitNewCase")?.addEventListener("click", () => {
-      if (ScreenCases._modalMode === "fir") {
+      if (ScreenCases._modalMode === "auto") {
+        ScreenCases.submitAutoRegistration();
+      } else if (ScreenCases._modalMode === "fir") {
         ScreenCases.submitFirAssistedCase();
       } else {
         ScreenCases.submitManualCase();
       }
     });
-    ScreenCases._modalMode = "manual";
+    ScreenCases._modalMode = "auto";
     ScreenCases._extractedFirData = null;
     ScreenCases._reviewerModifications = {};
     ScreenCases._uploadedFirFile = null;
+    ScreenCases._autoFirFile = null;
+    const initialSubmitBtn = document.getElementById("btnSubmitNewCase");
+    if (initialSubmitBtn) initialSubmitBtn.textContent = "⚡ Register Case & Run Automatic Pipeline";
   },
 
   switchModalTab(mode) {
@@ -10989,6 +11065,105 @@ ScreenReport.render = async function(caseId) {
   try { await ensureActiveCaseLoaded(caseId); } catch (err) { renderCaseNotFound(caseId, err.message); return; }
   const c = State.activeCase;
   const exhibits = State.evidence || [];
+
+  // 1. Fetch persisted dossier if available
+  let persistedReport = null;
+  try {
+    persistedReport = await Api.getCaseReport(caseId);
+  } catch (e) {
+    // If not available, fall back to ad-hoc assembly
+  }
+
+  if (persistedReport && persistedReport.sections && persistedReport.sections.length) {
+    const isApproved = persistedReport.approval_status === "APPROVED";
+    const incidentBadge = persistedReport.incident_type === "PROPERTY_LOSS" ? "Property Loss / Theft" : (persistedReport.incident_type === "DEATH_INVESTIGATION" ? "Death Investigation" : "Under Review");
+    const incidentBadgeClass = persistedReport.incident_type === "PROPERTY_LOSS" ? "badge-info" : (persistedReport.incident_type === "DEATH_INVESTIGATION" ? "badge-warning" : "badge-attention");
+
+    container.innerHTML = `
+      ${renderWorkspaceHeaderHtml("report")}
+      <main id="printableCaseReport" class="case-report">
+        <!-- Report Header -->
+        <header class="report-title" style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 2px solid var(--border-default);">
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+              <span class="badge badge-primary">${InvestigatorFirst.text(persistedReport.version || "v1.0")}</span>
+              <span class="badge ${incidentBadgeClass}">${incidentBadge}</span>
+              <span class="badge ${isApproved ? 'badge-success' : 'badge-attention'}">${InvestigatorFirst.text(persistedReport.approval_status)}</span>
+            </div>
+            <h2 style="margin: 0 0 6px 0; font-size: 1.4rem; font-weight: 700;">${InvestigatorFirst.text(persistedReport.title || c.title)}</h2>
+            <p style="margin: 0; font-size: 0.85rem; color: var(--text-muted);">
+              Case ${InvestigatorFirst.text(c.case_id)} · Report ID: ${InvestigatorFirst.text(persistedReport.report_id)} · FIR ${InvestigatorFirst.text(c.fir_metadata?.fir_number)}
+            </p>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary" onclick="window.print()">🖨️ Print Dossier</button>
+            <button class="btn btn-secondary" onclick="Api.runCasePipeline('${caseId}').then(() => { UI.showToast('Pipeline refreshed', 'success'); ScreenReport.render('${caseId}'); })">🔄 Refresh Pipeline</button>
+          </div>
+        </header>
+
+        <!-- Investigator Review & Endorsement Banner -->
+        <div class="card" style="padding: 16px; margin-bottom: 24px; background: ${isApproved ? 'rgba(16, 185, 129, 0.08)' : 'rgba(245, 158, 11, 0.08)'}; border-left: 4px solid ${isApproved ? 'var(--success, #10b981)' : 'var(--warning, #f59e0b)'};">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <strong style="font-size: 0.95rem; color: var(--text-main);">
+                ${isApproved ? '✅ Formally Approved Preliminary Dossier' : '⚠️ Investigator Review & Exception Endorsement Required'}
+              </strong>
+              <p style="margin: 4px 0 0 0; font-size: 0.82rem; color: var(--text-muted);">
+                ${isApproved 
+                  ? `Approved by ${InvestigatorFirst.text(persistedReport.approved_by)} at ${new Date(persistedReport.approved_at).toLocaleString()}. Notes: ${InvestigatorFirst.text(persistedReport.review_notes || 'No review notes provided.')}` 
+                  : 'Automated extraction pipeline completed with source traceability. Investigator endorsement records an authoritative review checkpoint.'}
+              </p>
+            </div>
+            ${!isApproved ? `
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="text" id="inpReportReviewNotes" class="form-input" placeholder="Optional review endorsement notes..." style="width: 280px; font-size: 0.8rem;" />
+                <button class="btn btn-primary" onclick="ScreenReport.handleEndorsement('${caseId}')">✍️ Endorse & Approve</button>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+
+        <!-- Render Structured Sections -->
+        ${persistedReport.sections.map(sec => `
+          <section style="margin-bottom: 28px; background: var(--bg-card); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--border-default);">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid var(--border-light); padding-bottom: 8px;">
+              <h3 style="margin: 0; font-size: 1.05rem; font-weight: 700; color: var(--text-main);">
+                ${sec.section_number}. ${InvestigatorFirst.text(sec.title)}
+              </h3>
+              ${sec.citations && sec.citations.length ? `
+                <span class="badge badge-info" style="font-size: 0.72rem;">${sec.citations.length} Source Grounding(s)</span>
+              ` : ''}
+            </div>
+
+            ${sec.content_text ? `<p style="font-size: 0.88rem; color: var(--text-secondary); line-height: 1.5; margin-bottom: 12px;">${InvestigatorFirst.text(sec.content_text)}</p>` : ''}
+
+            ${sec.items && sec.items.length ? `
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                ${sec.items.map(item => {
+                  if (item.label && item.value !== undefined) {
+                    return `<div style="display: grid; grid-template-columns: 200px 1fr; font-size: 0.85rem; padding: 4px 0; border-bottom: 1px dashed var(--border-light);"><dt style="font-weight: 600; color: var(--text-muted);">${InvestigatorFirst.text(item.label)}</dt><dd style="margin: 0; color: var(--text-main);">${InvestigatorFirst.text(item.value || "Not recorded")}</dd></div>`;
+                  }
+                  if (item.title && item.difference_summary) {
+                    return `<div class="report-finding" style="padding: 10px; background: var(--bg-card-subtle); border-radius: var(--radius-sm);"><strong style="font-size: 0.88rem;">${InvestigatorFirst.text(item.title)}</strong><p style="margin: 4px 0; font-size: 0.84rem; color: var(--text-muted);">${InvestigatorFirst.text(item.difference_summary)}</p></div>`;
+                  }
+                  if (item.missing) {
+                    return `<div style="padding: 10px; background: var(--bg-card-subtle); border-radius: var(--radius-sm); border-left: 3px solid var(--primary);"><strong style="font-size: 0.88rem; color: var(--text-main);">${InvestigatorFirst.text(item.missing)}</strong><div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;"><strong>Recommended Action:</strong> ${InvestigatorFirst.text(item.recommended_action)} · <strong>Potential Custodian:</strong> ${InvestigatorFirst.text(item.potential_custodian)}</div></div>`;
+                  }
+                  if (item.limitation) {
+                    return `<div style="padding: 6px 10px; font-size: 0.82rem; color: var(--text-muted); border-left: 2px solid var(--border-default);">${InvestigatorFirst.text(item.limitation)}</div>`;
+                  }
+                  return `<div style="font-size: 0.84rem; color: var(--text-main);">${InvestigatorFirst.text(JSON.stringify(item))}</div>`;
+                }).join("")}
+              </div>
+            ` : ''}
+          </section>
+        `).join("")}
+      </main>
+    `;
+    return;
+  }
+
+  // 2. Fallback to live ad-hoc assembly
   const [timelineResult, analysisResult, graphResult] = await Promise.all([
     Api.getTimelineEvents(caseId).catch(() => null), Api.getAnalysisSummary(caseId).catch(() => null), Api.getKnowledgeGraph(caseId).catch(() => null)
   ]);
@@ -11012,6 +11187,20 @@ ScreenReport.render = async function(caseId) {
       <section><h3>9. Investigator assessment</h3><p>No investigator assessment is included because the current report API does not expose one. Authorised fact and relationship decisions remain linked to their original sources.</p></section>
       <section><h3>10. Evidence references and provenance</h3><p>Each table entry links to its original exhibit record where that record is available. Technical custody, scan, and integrity details remain in the exhibit's expandable technical details.</p></section>
     </main>`;
+};
+
+ScreenReport.handleEndorsement = async function(caseId) {
+  const notes = document.getElementById("inpReportReviewNotes")?.value.trim() || "";
+  try {
+    await Api.reviewCaseReport(caseId, {
+      decision: "APPROVED",
+      notes: notes || "Investigator reviewed and approved preliminary dossier."
+    });
+    UI.showToast("Case report endorsed and approved successfully!", "success");
+    ScreenReport.render(caseId);
+  } catch (err) {
+    UI.showToast(err.message || "Failed to record report review.", "error");
+  }
 };
 
 const ScreenAdministration = {

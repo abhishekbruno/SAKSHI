@@ -10,6 +10,13 @@ from app.models.rag_index_job import RAGIndexJob
 from app.models.organization import Organization, Jurisdiction, PoliceStation
 from app.models.officer import Officer, IdSequence
 from app.models.case_assignment import CaseAssignment
+from app.models.pipeline_run import (
+    PipelineRun,
+    PipelineStageRun,
+    CaseReport,
+    PipelineRunStatus,
+    PipelineStageName,
+)
 
 __all__ = [
     "Case",
@@ -18,5 +25,15 @@ __all__ = [
     "RAGDocument",
     "RAGChunk",
     "RAGIndexJob",
-    "Organization", "Jurisdiction", "PoliceStation", "Officer", "IdSequence", "CaseAssignment",
+    "Organization",
+    "Jurisdiction",
+    "PoliceStation",
+    "Officer",
+    "IdSequence",
+    "CaseAssignment",
+    "PipelineRun",
+    "PipelineStageRun",
+    "CaseReport",
+    "PipelineRunStatus",
+    "PipelineStageName",
 ]
